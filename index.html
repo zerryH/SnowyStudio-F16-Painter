@@ -138,11 +138,51 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
 <aside class="panel right" id="uvDrawer"><div class="uv-drawer-head"><strong>UV texture & reference</strong><button id="uvClose" aria-label="Close UV panel">×</button></div><div class="panel-heading"><div class="eyebrow">UV output</div><h2>Texture atlas</h2><div class="small-muted">Live paint on the original 4K game texture.</div></div>
 <div class="section"><div class="section-title">UV preview <span class="pill">4K</span></div><div class="mini-wrap"><canvas id="atlasPreview" width="440" height="440"></canvas></div><div class="ruler"><span>0</span><span>4096 × 4096</span><span>1</span></div><button class="btn" id="atlasBtn" style="width:100%;margin-top:13px">Download 4K atlas ↓</button></div>
 <div class="section"><div class="section-title">Output format</div><div class="spec"><span>Aircraft</span><strong>F-16A Block 20 MLU</strong></div><div class="spec"><span>Color texture</span><strong>TGA RGBA 32-bit</strong></div><div class="spec"><span>Image size</span><strong>4096 × 4096</strong></div><div class="spec"><span>Download</span><strong>War Thunder ZIP</strong></div><div class="spec"><span>Normal map</span><strong>Game default</strong></div><div class="spec"><span>Panel details</span><strong>Preserved</strong></div></div>
-<div class="section"><div class="section-title">Inspiration</div><img src="assets/inspiration.png" style="width:100%;border-radius:9px;border:1px solid #385263" alt="Original winter mountain F-16 concept" title="Original user-provided SnowySukhoi reference"><div class="small-muted" style="margin-top:9px">Use the mountain and roundel stamps to build your own reference-inspired livery.</div></div>
+<div class="section"><div class="section-title">Inspiration</div><img src="assets/inspiration.webp" style="width:100%;border-radius:9px;border:1px solid #385263" alt="Original winter mountain F-16 concept" title="Original user-provided SnowySukhoi reference"><div class="small-muted" style="margin-top:9px">Use the mountain and roundel stamps to build your own reference-inspired livery.</div></div>
 <div class="section"><button id="helpSide" class="btn" style="width:100%">? Quick guide & shortcuts</button></div></aside>
 </div></div>
 <div class="toast" role="status" id="toast"></div>
 <div class="modal-backdrop" id="helpModal"><div class="modal"><div class="modal-head"><div class="eyebrow">Welcome to SnowyStudio</div><h2>Paint your own F-16 in 3D</h2><p class="small-muted">Actual War Thunder model + matching UV atlas · Works locally in Chrome / Edge</p></div><div class="modal-content"><ol><li><strong>Left-click and drag on the F-16</strong> to paint directly onto its surface. The strokes follow its UV mapping, even across nearby triangles.</li><li><strong>Right-drag</strong> to rotate the plane, <strong>scroll</strong> to zoom; use Top / Right / Left / Bottom to inspect difficult places.</li><li>In <strong>Decals</strong>, choose a stamp or upload a transparent PNG. <strong>Hover over the 3D model to preview the exact placement</strong>; resize and rotate before left-clicking to apply. Esc cancels without painting.</li><li>Select <strong>Alpine or Arctic</strong> for instant winter camouflage. Choose the <strong>mountain</strong> brush for hand-painted lines.</li><li>Use <strong>Undo / Redo</strong> freely. Save a <code>.snowyproject.json</code> to continue painting later.</li><li>Press <strong>Export War Thunder skin</strong> for a ZIP containing the 4K <code>.tga</code> and <code>.blk</code>. Extract the skin folder into <code>War Thunder/UserSkins</code>.</li></ol><p class="small-muted">Paint applies to the main fuselage, wings and tail surface. Some cockpit and weapon components use separate materials; those are displayed as reference geometry, not painted into the main texture.</p></div><div class="modal-foot"><button class="btn primary" id="closeHelp">Start painting →</button></div></div></div>
 <div class="modal-backdrop" id="busyModal"><div class="modal" style="max-width:440px"><div class="modal-head"><div class="eyebrow">Exporting your skin</div><h2 id="busyTitle">Preparing TGA texture…</h2><div class="small-muted" id="busySub">Keeping original alpha data and packing the War Thunder files.</div></div><div class="modal-content" style="display:flex;align-items:center;gap:12px"><span class="spinner"></span><span id="busyMessage">Please keep this tab open.</span></div></div></div>
-<script src="assets/model-data.js"></script><script src="assets/texture-data.js"></script><script src="app.js"></script>
+<script src="assets/model-init.js"></script>
+<script src="assets/model-part-00.js"></script>
+<script src="assets/model-part-01.js"></script>
+<script src="assets/model-part-02.js"></script>
+<script src="assets/model-part-03.js"></script>
+<script src="assets/model-part-04.js"></script>
+<script src="assets/model-part-05.js"></script>
+<script src="assets/model-part-06.js"></script>
+<script src="assets/model-part-07.js"></script>
+<script src="assets/model-part-08.js"></script>
+<script src="assets/model-part-09.js"></script>
+<script src="assets/model-part-10.js"></script>
+<script src="assets/model-part-11.js"></script>
+<script src="assets/model-part-12.js"></script>
+<script src="assets/model-part-13.js"></script>
+<script src="assets/model-final.js"></script><script src="assets/texture-init.js"></script>
+<script src="assets/texture-part-00.js"></script>
+<script src="assets/texture-part-01.js"></script>
+<script src="assets/texture-part-02.js"></script>
+<script src="assets/texture-part-03.js"></script>
+<script src="assets/texture-part-04.js"></script>
+<script src="assets/texture-part-05.js"></script>
+<script src="assets/texture-part-06.js"></script>
+<script src="assets/texture-part-07.js"></script>
+<script src="assets/texture-part-08.js"></script>
+<script src="assets/texture-part-09.js"></script>
+<script src="assets/texture-part-10.js"></script>
+<script src="assets/texture-part-11.js"></script>
+<script src="assets/texture-part-12.js"></script>
+<script src="assets/texture-part-13.js"></script>
+<script src="assets/texture-part-14.js"></script>
+<script src="assets/texture-part-15.js"></script>
+<script src="assets/texture-part-16.js"></script>
+<script src="assets/texture-part-17.js"></script>
+<script src="assets/texture-part-18.js"></script>
+<script src="assets/texture-part-19.js"></script>
+<script src="assets/texture-part-20.js"></script>
+<script src="assets/texture-part-21.js"></script>
+<script src="assets/texture-part-22.js"></script>
+<script src="assets/texture-part-23.js"></script>
+<script src="assets/texture-final.js"></script><script src="app.js"></script>
 </body></html>

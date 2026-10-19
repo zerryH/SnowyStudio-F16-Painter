@@ -1,0 +1,1 @@
+window.F16_BASE_SRC=JSON.parse(window.__SnowyTextureParts.join('').slice(20).replace(/;\s*$/, ''));delete window.__SnowyTextureParts;
