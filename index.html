@@ -102,13 +102,54 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
 .current-mode p{font-size:10.5px;color:#b2c9d4;line-height:1.5;margin:5px 0 10px}
 #toolPreview{display:block;width:100%;height:80px;border-radius:7px;border:1px solid #486777;background:#daeaf0}
 .tool-config{margin:12px 0}.tool-config[hidden],[data-tool-config][hidden]{display:none!important}
+.quality-wrap{position:relative;flex-shrink:0}
+.quality-menu{position:absolute;right:0;top:calc(100% + 9px);width:min(340px,calc(100vw - 20px));max-height:calc(100vh - 90px);overflow-y:auto;z-index:100;background:#142331;border:1px solid #42687a;box-shadow:0 20px 45px #000a;border-radius:12px;padding:15px}
+.quality-menu[hidden],.custom-quality-fields[hidden]{display:none!important}
+.quality-menu-title{display:flex;justify-content:space-between;align-items:center;color:#e3f6ff;font-weight:800;font-size:13px;margin:1px 0 12px}
+.quality-menu-title span{font-size:10px;font-weight:600;color:#86b0bd}
+.quality-options{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.quality-option{border:1px solid #35536a;background:#203446;border-radius:8px;padding:10px 6px;font-size:11px;font-weight:750}
+.quality-option:hover{background:#285269}
+.quality-option.active{border-color:#68d6e4;background:#1a5967;color:#e1fcff}
+.custom-quality-fields{margin-top:16px;border-top:1px solid #29495a;padding-top:10px}
+.quality-label{font-size:11px;font-weight:750;color:#cbe1e9;display:flex;justify-content:space-between;margin:12px 0 6px}
+.quality-label small{font-size:10px;color:#88aabb;font-weight:500}
+.quality-number{width:100%;background:#0e1d2b;color:#dff8ff;border:1px solid #3c6477;border-radius:8px;padding:10px 12px;font-size:13px;font-variant-numeric:tabular-nums}
+.quality-number:focus{outline:2px solid #73dce9;outline-offset:1px}
+.quality-check{display:flex;align-items:center;gap:8px;font-size:11px;color:#e0eff6;margin:11px 0}
+.quality-check input{width:15px;height:15px;accent-color:#72dce7}
+.quality-check small{font-size:10px;color:#91abb8}
+.quality-note{font-size:10px;color:#98b8c5;line-height:1.5;background:#112b37;border:1px solid #2a5363;border-radius:7px;padding:9px;margin:14px 0}
+.quality-apply{width:100%}
 </style></head>
 <body>
 <div class="app">
 <header class="topbar">
  <div class="brand"><div class="brand-icon">⌁</div><div><div class="brand-name">Snowy<span>Studio</span></div><div class="brand-sub">Aircraft skin workshop</div></div></div>
  <div class="sep"></div><div class="topinfo"><span class="dot"></span><strong>F-16A Block 20 MLU</strong><span>·</span>Offline editor</div>
- <div class="topright"><button class="btn ghost" id="previewQualityBtn" title="Select preview quality. 4K export is unchanged.">⚡ Fast</button><button class="btn ghost uv-launch" id="uvToggle" title="Show the texture UV atlas">▦ UV</button><button class="btn icon" id="undoBtn" title="Undo Ctrl+Z" disabled>↶</button><button class="btn icon" id="redoBtn" title="Redo Ctrl+Y" disabled>↷</button><button class="btn ghost" id="projectBtn">↓ Project</button><button class="btn ghost" id="loadBtn">↑ Open</button><button class="btn primary" id="exportBtn">↥ Export War Thunder skin</button></div>
+ <div class="topright"><div id="qualityWrap" class="quality-wrap">
+ <button class="btn ghost" id="previewQualityBtn" type="button" aria-expanded="false" aria-controls="qualityMenu" title="Customize rendering">⚡ Fast ▾</button>
+ <div id="qualityMenu" class="quality-menu" hidden>
+  <div class="quality-menu-title">Preview performance <span>3D only</span></div>
+  <div class="quality-options" role="group" aria-label="Graphics mode">
+   <button class="quality-option active" type="button" data-quality-option="fast">⚡ Fast</button>
+   <button class="quality-option" type="button" data-quality-option="balanced">Balanced</button>
+   <button class="quality-option" type="button" data-quality-option="detail">Detail</button>
+   <button class="quality-option" type="button" data-quality-option="custom">⚙ Custom</button>
+  </div>
+  <div id="customQualityFields" class="custom-quality-fields" hidden>
+   <label class="quality-label" for="customFps">FPS limit <small>1–1000</small></label>
+   <input class="quality-number" id="customFps" type="number" min="1" max="1000" step="1" value="60" inputmode="numeric">
+   <label class="quality-check"><input id="customUnlimited" type="checkbox"> Unlimited FPS <small>(display refresh limit)</small></label>
+   <label class="quality-label" for="customTextureSize">3D texture resolution <small>256–3000 px</small></label>
+   <input class="quality-number" id="customTextureSize" type="number" min="256" max="3000" step="1" value="2048" inputmode="numeric">
+   <label class="quality-label" for="customViewportSize">Max viewport edge <small>320–3000 px</small></label>
+   <input class="quality-number" id="customViewportSize" type="number" min="320" max="3000" step="1" value="1800" inputmode="numeric">
+   <div class="quality-note">Higher settings can increase GPU usage. Unlimited removes SnowyStudio's FPS cap but cannot exceed your browser/display limits. War Thunder export always stays 4096×4096.</div>
+   <button class="btn primary quality-apply" id="applyCustomQuality" type="button">Apply custom settings</button>
+  </div>
+ </div>
+</div><button class="btn ghost uv-launch" id="uvToggle" title="Show the texture UV atlas">▦ UV</button><button class="btn icon" id="undoBtn" title="Undo Ctrl+Z" disabled>↶</button><button class="btn icon" id="redoBtn" title="Redo Ctrl+Y" disabled>↷</button><button class="btn ghost" id="projectBtn">↓ Project</button><button class="btn ghost" id="loadBtn">↑ Open</button><button class="btn primary" id="exportBtn">↥ Export War Thunder skin</button></div>
 </header>
 <div class="workspace">
 <nav class="rail" aria-label="Tools">
@@ -205,5 +246,5 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
 <script src="assets/texture-part-21.js"></script>
 <script src="assets/texture-part-22.js"></script>
 <script src="assets/texture-part-23.js"></script>
-<script src="assets/texture-final.js"></script><script src="app.js?v=fast-uv-paint-20261020"></script>
+<script src="assets/texture-final.js"></script><script src="app.js?v=custom-graphics-20261020"></script>
 </body></html>

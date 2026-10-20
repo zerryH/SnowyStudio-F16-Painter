@@ -30,6 +30,6 @@ assert.ok(code.includes('textureSize:1024'),'Fast on-screen texture is 1024px');
 assert.ok(code.includes("Math.min(state.tool==='spray'?2:5"),'stamp count per frame is bounded');
 const html=fs.readFileSync(__dirname+'/../index.html','utf8');
 assert.match(html,/id="previewQualityBtn"/,'preview mode selector');
-assert.match(html,/app\.js\?v=fast-uv-paint-20261020/,'script cache bust');
+assert.match(html,/app\.js\?v=custom-graphics-20261020/,'script cache bust');
 console.log('PASS: 30/30/40fps paint caps, 38fps camera cap, one RAF per 100 events, 850k pixels, 1K preview, bounded brush stamps.');
 

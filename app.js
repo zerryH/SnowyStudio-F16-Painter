@@ -23,26 +23,82 @@ const renderProfiles={
  balanced:{textureSize:2048,maxPixels:1650000,maxDpr:1.1,paintFps:30,orbitFps:45,idleFps:50,label:'Balanced'},
  detail:{textureSize:4096,maxPixels:2700000,maxDpr:1.5,paintFps:40,orbitFps:60,idleFps:60,label:'Detail'}
 };
+const customQuality={fps:60,unlimited:false,textureSize:2048,maxSide:1800};
 const previewCanvas=document.createElement('canvas');
 const previewCtx=previewCanvas.getContext('2d');
 let previewSize=1024,frameTimer=0,lastDrawTime=-1000,lastStatusTime=0;
 let textureFull=true,activeEdit=null,pendingStrokePoint=null;
-function qualityProfile(){return renderProfiles[state.quality]||renderProfiles.fast;}
+function qualityProfile(){
+ if(state.quality!=='custom')return renderProfiles[state.quality]||renderProfiles.fast;
+ const fps=customQuality.unlimited?Infinity:customQuality.fps;
+ return {textureSize:customQuality.textureSize,maxPixels:customQuality.maxSide**2,
+  maxSide:customQuality.maxSide,maxDpr:3,paintFps:fps,orbitFps:fps,idleFps:fps,label:'Custom'};
+}
+function clampQualityNumber(value,min,max,fallback){
+ const n=Number(value);
+ return Number.isFinite(n)&&n>=min?Math.round(clamp(n,min,max)):fallback;
+}
+function syncCustomQualityInputs(){
+ const fps=$('customFps'),unlimited=$('customUnlimited'),texture=$('customTextureSize'),maxSide=$('customViewportSize');
+ if(!fps||!unlimited||!texture||!maxSide)return;
+ fps.value=customQuality.fps;
+ fps.disabled=customQuality.unlimited;
+ unlimited.checked=customQuality.unlimited;
+ texture.value=customQuality.textureSize;
+ maxSide.value=customQuality.maxSide;
+}
+function readCustomQualityInputs(){
+ const fps=$('customFps'),unlimited=$('customUnlimited'),texture=$('customTextureSize'),maxSide=$('customViewportSize');
+ customQuality.fps=clampQualityNumber(fps.value,1,1000,customQuality.fps);
+ customQuality.unlimited=unlimited.checked;
+ customQuality.textureSize=clampQualityNumber(texture.value,256,3000,customQuality.textureSize);
+ customQuality.maxSide=clampQualityNumber(maxSide.value,320,3000,customQuality.maxSide);
+ syncCustomQualityInputs();
+}
+function saveQualityPreferences(){
+ try{localStorage.setItem('snowystudio-quality-v1',JSON.stringify({mode:state.quality,custom:customQuality}));}catch(e){}
+}
+function loadQualityPreferences(){
+ try{
+  const raw=localStorage.getItem('snowystudio-quality-v1');
+  if(!raw)return;
+  const data=JSON.parse(raw),c=data?.custom;
+  if(c&&typeof c==='object'){
+   customQuality.fps=clampQualityNumber(c.fps,1,1000,60);
+   customQuality.textureSize=clampQualityNumber(c.textureSize,256,3000,2048);
+   customQuality.maxSide=clampQualityNumber(c.maxSide,320,3000,1800);
+   customQuality.unlimited=c.unlimited===true;
+  }
+  if(['fast','balanced','detail','custom'].includes(data.mode))state.quality=data.mode;
+ }catch(e){}
+}
 function setPreviewQuality(next){
- if(!renderProfiles[next])return;
+ if(next!=='custom'&&!renderProfiles[next])return;
  state.quality=next;
  const profile=qualityProfile();
+ const changed=previewSize!==profile.textureSize||previewCanvas.width!==profile.textureSize;
  previewSize=profile.textureSize;
- previewCanvas.width=previewCanvas.height=previewSize;
- const subTile=TILE*previewSize/W;
- patchCanvas.width=patchCanvas.height=subTile;
- textureFull=true;
- dirtyTiles.clear();
- state.dirtyTex=true;state.needsRender=true;
+ if(changed){
+  previewCanvas.width=previewCanvas.height=previewSize;
+  // Non-power-of-two values such as 3000px use per-tile integer boundaries.
+  // The patch canvas is resized for each destination tile in refreshTexture.
+  textureFull=true;dirtyTiles.clear();state.dirtyTex=true;
+ }
+ state.needsRender=true;
  const btn=$('previewQualityBtn');
- if(btn){btn.textContent='⚡ '+profile.label;btn.title='3D preview: '+profile.label+' · '+previewSize+'px texture. Export stays 4096px. Click for next mode.';}
+ if(btn){
+  btn.textContent='⚡ '+profile.label+' ▾';
+  btn.title='Choose 3D preview quality and custom FPS settings; skin export stays 4K.';
+ }
+ for(const option of document.querySelectorAll('[data-quality-option]')){
+  const active=option.dataset.qualityOption===next;
+  option.classList.toggle('active',active);
+  option.setAttribute('aria-pressed',String(active));
+ }
  const info=$('perfModeText');
- if(info)info.textContent=profile.label+' preview · '+previewSize+'px texture · 4K export';
+ if(info)info.textContent=profile.label+' · '+previewSize+'px texture · '+
+ (state.quality==='custom'?(customQuality.unlimited?'Unlimited':customQuality.fps+' FPS')+' · ':'')+'4K export';
+ saveQualityPreferences();
  requestView();
 }
 
@@ -123,7 +179,7 @@ function scheduleFrame(){
  if(raf||frameTimer||document.hidden)return;
  const profile=qualityProfile();
  const fps=state.brushActive?profile.paintFps:state.orbitActive?profile.orbitFps:state.tool==='decal'?profile.paintFps:profile.idleFps;
- const wait=Math.max(0,1000/fps-(performance.now()-lastDrawTime));
+ const wait=Number.isFinite(fps)?Math.max(0,1000/fps-(performance.now()-lastDrawTime)):0;
  if(wait>3){
   frameTimer=setTimeout(()=>{frameTimer=0;if(!raf&&!document.hidden)raf=requestAnimationFrame(frame);},wait);
  }else raf=requestAnimationFrame(frame);
@@ -183,11 +239,17 @@ function refreshTexture(){
    out.drawImage(baseCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
    if(state.showCamo)out.drawImage(camCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
    if(state.showPaint)out.drawImage(paintCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
-   const subTile=TILE*previewSize/W,scale=previewSize/W;
-   patchCtx.clearRect(0,0,subTile,subTile);
-   patchCtx.drawImage(outCanvas,x,y,TILE,TILE,0,0,subTile,subTile);
-   // Paint source stays 4096²; only the on-screen GPU texture is downsampled.
-   gl.texSubImage2D(gl.TEXTURE_2D,0,Math.round(x*scale),Math.round((H-y-TILE)*scale),gl.RGBA,gl.UNSIGNED_BYTE,patchCanvas);
+   const scale=previewSize/W;
+   const left=Math.round(x*scale),right=Math.round((x+TILE)*scale);
+   const bottom=Math.round((H-y-TILE)*scale),top=Math.round((H-y)*scale);
+   const pw=right-left,ph=top-bottom;
+   if(pw<1||ph<1)continue;
+   if(patchCanvas.width!==pw)patchCanvas.width=pw;
+   if(patchCanvas.height!==ph)patchCanvas.height=ph;
+   patchCtx.clearRect(0,0,pw,ph);
+   patchCtx.drawImage(outCanvas,x,y,TILE,TILE,0,0,pw,ph);
+   // Integer-aligned boundaries correctly cover 3000px and other custom sizes.
+   gl.texSubImage2D(gl.TEXTURE_2D,0,left,bottom,gl.RGBA,gl.UNSIGNED_BYTE,patchCanvas);
    if(++batch>=4)break;
   }
   state.dirtyTex=dirtyTiles.size>0;
@@ -232,7 +294,7 @@ function frame(time){raf=0;lastDrawTime=time;
  const w=wrap.clientWidth,h=wrap.clientHeight;
  if(w<1||h<1)return;
  const profile=qualityProfile();
- const dpr=Math.min(window.devicePixelRatio||1,profile.maxDpr,Math.sqrt(profile.maxPixels/(w*h)));
+ const dpr=Math.min(window.devicePixelRatio||1,profile.maxDpr,Math.sqrt(profile.maxPixels/(w*h)),(profile.maxSide||Infinity)/Math.max(w,h));
 
  const dw=Math.max(1,Math.round(w*dpr)),dh=Math.max(1,Math.round(h*dpr));if(view.width!==dw||view.height!==dh){view.width=dw;view.height=dh;gl.viewport(0,0,dw,dh);state.needsRender=true;}
  if(state.dirtyTex&&state.baseLoaded&&(!state.pressed||time-lastTexUpload>42)){refreshTexture();state.needsRender=true;}
@@ -661,12 +723,32 @@ function setupUI(){setupSwatches();setupStamps();
  const drawer=$('uvDrawer');const toggleUV=(open)=>{drawer.classList.toggle('is-open',open);if(open){state.needMini=true;requestView();}$('uvToggle').setAttribute('aria-expanded',String(open));};
  $('uvToggle').addEventListener('click',()=>toggleUV(!drawer.classList.contains('is-open')));
  $('uvClose').addEventListener('click',()=>toggleUV(false));
- const qualityButton=$('previewQualityBtn');
- if(qualityButton)qualityButton.addEventListener('click',()=>{
-  const modes=['fast','balanced','detail'];
-  setPreviewQuality(modes[(modes.indexOf(state.quality)+1)%modes.length]);
+ const qualityButton=$('previewQualityBtn'),qualityMenu=$('qualityMenu'),qualityWrap=$('qualityWrap');
+ function showQualityMenu(show){
+  qualityMenu.hidden=!show;qualityButton.setAttribute('aria-expanded',String(show));
+  $('customQualityFields').hidden=state.quality!=='custom';
+  if(show)syncCustomQualityInputs();
+ }
+ qualityButton.addEventListener('click',()=>showQualityMenu(qualityMenu.hidden));
+ document.addEventListener('pointerdown',e=>{
+  if(!qualityMenu.hidden&&!qualityWrap.contains(e.target))showQualityMenu(false);
  });
- setPreviewQuality(state.quality);
+ for(const option of document.querySelectorAll('[data-quality-option]')){
+  option.addEventListener('click',()=>{
+   const mode=option.dataset.qualityOption;
+   setPreviewQuality(mode);
+   $('customQualityFields').hidden=mode!=='custom';
+   if(mode==='custom')syncCustomQualityInputs();
+   else showQualityMenu(false);
+  });
+ }
+ $('customUnlimited').addEventListener('change',()=>{
+  $('customFps').disabled=$('customUnlimited').checked;
+ });
+ $('applyCustomQuality').addEventListener('click',()=>{
+  readCustomQualityInputs();setPreviewQuality('custom');showQualityMenu(false);
+ });
+ loadQualityPreferences();syncCustomQualityInputs();setPreviewQuality(state.quality);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.needsRender)scheduleFrame();});
   $('zoomIn').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*.78,4.5,60);requestView();});
  $('zoomOut').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*1.28,4.5,60);requestView();});
@@ -694,7 +776,7 @@ function setupUI(){setupSwatches();setupStamps();
  view.addEventListener('pointerdown',beginStroke);view.addEventListener('pointermove',moveStroke);view.addEventListener('pointerup',endStroke);view.addEventListener('pointercancel',endStroke);view.addEventListener('contextmenu',e=>e.preventDefault());view.addEventListener('pointerleave',()=>{$('cursorPreview').style.display='none';state.previewInside=false;state.previewHit=null;requestView();});
  view.addEventListener('wheel',e=>{e.preventDefault();orbit.dist=clamp(orbit.dist*Math.exp(e.deltaY*.001),4.5,60);requestView();},{passive:false});
  wrap.addEventListener('dragover',e=>{e.preventDefault();});wrap.addEventListener('drop',e=>{e.preventDefault();const f=e.dataTransfer?.files?.[0];if(f&&f.type.startsWith('image/'))loadImageFile(f,img=>{setDecalImage(img,f.name);document.querySelectorAll('.stamp').forEach(x=>x.classList.remove('active'));setTool('decal');message('Image loaded. Hover over the aircraft to preview.');});});
- window.addEventListener('keydown',e=>{if(e.key==='Escape'){if($('helpModal').classList.contains('show')){$('helpModal').classList.remove('show');}else if(state.tool==='decal'){setTool('orbit');message('Decal preview cancelled — no artwork placed.');}e.preventDefault();return;}if(e.target.matches('input,textarea,select'))return;let key=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&key==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();return;}if((e.ctrlKey||e.metaKey)&&key==='y'){e.preventDefault();redo();return;}if(key==='b')setTool('brush');if(key==='d')setTool('decal');if(key==='e')setTool('erase');if(key==='o')setTool('orbit');});
+ window.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('qualityMenu').hidden){$('qualityMenu').hidden=true;$('previewQualityBtn').setAttribute('aria-expanded','false');e.preventDefault();return;}if($('helpModal').classList.contains('show')){$('helpModal').classList.remove('show');}else if(state.tool==='decal'){setTool('orbit');message('Decal preview cancelled — no artwork placed.');}e.preventDefault();return;}if(e.target.matches('input,textarea,select'))return;let key=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&key==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();return;}if((e.ctrlKey||e.metaKey)&&key==='y'){e.preventDefault();redo();return;}if(key==='b')setTool('brush');if(key==='d')setTool('decal');if(key==='e')setTool('erase');if(key==='o')setTool('orbit');});
  window.addEventListener('resize',()=>{fitStrokeOverlay();requestView();});
 }
 try{status('Loading F-16 geometry…');initGL();initMesh();setupUI();requestView();loadBase().then(()=>{state.loaded=true;status('F-16 READY · 68k textured triangles');message('F-16 loaded. Paint directly on the aircraft!');}).catch(e=>{console.error(e);status('Could not load base image: '+e.message);message('Texture missing — keep assets folder next to index.html');});}catch(e){console.error('SnowyStudio boot',e);status('Startup error: '+e.message);alert('SnowyStudio failed to start: '+e.message);}
