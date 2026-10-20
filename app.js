@@ -4,19 +4,46 @@
 (()=>{
 const $=id=>document.getElementById(id), W=4096,H=4096, TAU=Math.PI*2;
 const view=$('view3d'), wrap=$('viewWrap'), hint=$('status'), mini=$('atlasPreview'), miniCtx=mini.getContext('2d');
-const toast=$('toast'), gl=view.getContext('webgl2',{antialias:true,alpha:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
+const toast=$('toast'), gl=view.getContext('webgl2',{antialias:false,alpha:true,preserveDrawingBuffer:false,desynchronized:true,powerPreference:'high-performance'});
 if(!gl){hint.textContent='WebGL2 unavailable · enable hardware acceleration in Chrome / Edge'; alert('SnowyStudio needs WebGL2. Enable hardware acceleration in Chrome or Edge.');return;}
 const V=(x,y,z)=>[x,y,z], sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],mul=(a,s)=>[a[0]*s,a[1]*s,a[2]*s],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],len=a=>Math.hypot(...a),unit=a=>mul(a,1/(len(a)||1)),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const baseCanvas=document.createElement('canvas'),camCanvas=document.createElement('canvas'),paintCanvas=document.createElement('canvas'),outCanvas=document.createElement('canvas');
 for(const c of [baseCanvas,camCanvas,paintCanvas,outCanvas]){c.width=W;c.height=H;}
 const base=baseCanvas.getContext('2d',{willReadFrequently:true}), cam=camCanvas.getContext('2d'),paint=paintCanvas.getContext('2d',{willReadFrequently:true}),out=outCanvas.getContext('2d',{willReadFrequently:true});
-const state={tool:'brush',pane:'paint',lastPaintTool:'brush',style:'round',size:.24,opacity:1,hardness:1,sprayDensity:68,spraySpread:1.45,peakHeight:1.1,peakSpacing:1.5,color:'#101820',decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,strokeTravel:0,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
+const state={tool:'brush',pane:'paint',quality:'fast',lastPaintTool:'brush',style:'round',size:.24,opacity:1,hardness:1,sprayDensity:68,spraySpread:1.45,peakHeight:1.1,peakSpacing:1.5,color:'#101820',decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,strokeTravel:0,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
 const orbit={yaw:.87,pitch:.37,dist:21,target:[.65,.15,0],pos:[0,0,0],right:[0,0,0],up:[0,1,0],forward:[0,0,-1]};
 let program,tex,decalTex,locations,meshes=[],skin=null,lastTexUpload=0,lastMini=0,toastTimer=0,raf=0,lastPointerRay=null,baseAlpha=null,modelTri=0;
 const TILE=256,GRID=W/TILE,dirtyTiles=new Set();
 const patchCanvas=document.createElement('canvas');patchCanvas.width=patchCanvas.height=TILE;
 const patchCtx=patchCanvas.getContext('2d');
+const renderProfiles={
+ fast:{textureSize:1024,maxPixels:850000,maxDpr:.9,paintFps:22,orbitFps:32,idleFps:35,label:'Fast'},
+ balanced:{textureSize:2048,maxPixels:1650000,maxDpr:1.1,paintFps:30,orbitFps:45,idleFps:50,label:'Balanced'},
+ detail:{textureSize:4096,maxPixels:2700000,maxDpr:1.5,paintFps:40,orbitFps:60,idleFps:60,label:'Detail'}
+};
+const previewCanvas=document.createElement('canvas');
+const previewCtx=previewCanvas.getContext('2d');
+let previewSize=1024,frameTimer=0,lastDrawTime=-1000,lastStatusTime=0;
 let textureFull=true,activeEdit=null,pendingStrokePoint=null;
+function qualityProfile(){return renderProfiles[state.quality]||renderProfiles.fast;}
+function setPreviewQuality(next){
+ if(!renderProfiles[next])return;
+ state.quality=next;
+ const profile=qualityProfile();
+ previewSize=profile.textureSize;
+ previewCanvas.width=previewCanvas.height=previewSize;
+ const subTile=TILE*previewSize/W;
+ patchCanvas.width=patchCanvas.height=subTile;
+ textureFull=true;
+ dirtyTiles.clear();
+ state.dirtyTex=true;state.needsRender=true;
+ const btn=$('previewQualityBtn');
+ if(btn){btn.textContent='⚡ '+profile.label;btn.title='3D preview: '+profile.label+' · '+previewSize+'px texture. Export stays 4096px. Click for next mode.';}
+ const info=$('perfModeText');
+ if(info)info.textContent=profile.label+' preview · '+previewSize+'px texture · 4K export';
+ requestView();
+}
+
 
 function message(msg){toast.textContent=msg;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),3300);}
 function status(msg){hint.textContent=msg;}
@@ -90,7 +117,17 @@ function vpMatrix(aspect){cameraBasis();const r=orbit.right,u=orbit.up,f=orbit.f
  const far=250,near=.1,q=1/Math.tan(Math.PI/6),proj=new Float32Array([q/aspect,0,0,0,0,q,0,0,0,0,(far+near)/(near-far),-1,0,0,(2*far*near)/(near-far),0]);
  const result=new Float32Array(16);for(let c=0;c<4;c++)for(let row=0;row<4;row++){result[c*4+row]=0;for(let k=0;k<4;k++)result[c*4+row]+=proj[k*4+row]*view[c*4+k];}return result;
 }
-function requestView(){state.needsRender=true;if(!raf)raf=requestAnimationFrame(frame);}
+function scheduleFrame(){
+ if(raf||frameTimer||document.hidden)return;
+ const profile=qualityProfile();
+ const fps=state.brushActive?profile.paintFps:state.orbitActive?profile.orbitFps:state.tool==='decal'?profile.paintFps:profile.idleFps;
+ const wait=Math.max(0,1000/fps-(performance.now()-lastDrawTime));
+ if(wait>3){
+  frameTimer=setTimeout(()=>{frameTimer=0;if(!raf&&!document.hidden)raf=requestAnimationFrame(frame);},wait);
+ }else raf=requestAnimationFrame(frame);
+}
+function requestView(){state.needsRender=true;scheduleFrame();}
+
 function compose(){
  out.clearRect(0,0,W,H);
  out.drawImage(baseCanvas,0,0);
@@ -130,7 +167,9 @@ function refreshTexture(){
  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
  if(textureFull){
   compose();
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,outCanvas);
+  previewCtx.clearRect(0,0,previewSize,previewSize);
+  previewCtx.drawImage(outCanvas,0,0,previewSize,previewSize);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,previewCanvas);
   textureFull=false;dirtyTiles.clear();state.dirtyTex=false;
  }else{
   // Only upload regions actually touched by the brush, instead of 16M pixels.
@@ -142,11 +181,12 @@ function refreshTexture(){
    out.drawImage(baseCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
    if(state.showCamo)out.drawImage(camCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
    if(state.showPaint)out.drawImage(paintCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
-   patchCtx.clearRect(0,0,TILE,TILE);
-   patchCtx.drawImage(outCanvas,x,y,TILE,TILE,0,0,TILE,TILE);
-   // Canvas input has flipped Y; the destination sub-region must match it.
-   gl.texSubImage2D(gl.TEXTURE_2D,0,x,H-y-TILE,gl.RGBA,gl.UNSIGNED_BYTE,patchCanvas);
-   if(++batch>=8)break;
+   const subTile=TILE*previewSize/W,scale=previewSize/W;
+   patchCtx.clearRect(0,0,subTile,subTile);
+   patchCtx.drawImage(outCanvas,x,y,TILE,TILE,0,0,subTile,subTile);
+   // Paint source stays 4096²; only the on-screen GPU texture is downsampled.
+   gl.texSubImage2D(gl.TEXTURE_2D,0,Math.round(x*scale),Math.round((H-y-TILE)*scale),gl.RGBA,gl.UNSIGNED_BYTE,patchCanvas);
+   if(++batch>=4)break;
   }
   state.dirtyTex=dirtyTiles.size>0;
  }
@@ -185,8 +225,14 @@ function decalPreviewUniforms(){
  gl.uniform1f(locations.decalAngle,state.decalRotate*Math.PI/180);
  gl.uniform1f(locations.decalOpacity,Math.min(0.86,Math.max(0.12,state.opacity*0.78)));
 }
-function frame(time){raf=0;if(state.brushActive&&pendingStrokePoint)flushStrokePoint();const w=wrap.clientWidth,h=wrap.clientHeight,dpr=Math.min(window.devicePixelRatio||1,1.5);
- const dw=Math.round(w*dpr),dh=Math.round(h*dpr);if(view.width!==dw||view.height!==dh){view.width=dw;view.height=dh;gl.viewport(0,0,dw,dh);state.needsRender=true;}
+function frame(time){raf=0;lastDrawTime=time;
+ if(state.brushActive&&pendingStrokePoint)flushStrokePoint();
+ const w=wrap.clientWidth,h=wrap.clientHeight;
+ if(w<1||h<1)return;
+ const profile=qualityProfile();
+ const dpr=Math.min(window.devicePixelRatio||1,profile.maxDpr,Math.sqrt(profile.maxPixels/(w*h)));
+
+ const dw=Math.max(1,Math.round(w*dpr)),dh=Math.max(1,Math.round(h*dpr));if(view.width!==dw||view.height!==dh){view.width=dw;view.height=dh;gl.viewport(0,0,dw,dh);state.needsRender=true;}
  if(state.dirtyTex&&state.baseLoaded&&(!state.pressed||time-lastTexUpload>42)){refreshTexture();state.needsRender=true;}
  if(state.needMini&&state.baseLoaded&&!state.pressed&&$('uvDrawer').classList.contains('is-open')&&time-lastMini>400){miniCtx.clearRect(0,0,440,440);miniCtx.drawImage(outCanvas,0,0,440,440);state.needMini=false;lastMini=time;}
  if(state.needsRender){
@@ -442,7 +488,7 @@ function finishHistory(){
  if(step.tiles.size||step.before.camo!==step.after.camo||step.before.strength!==step.after.strength||step.before.showCamo!==step.after.showCamo||step.before.showPaint!==step.after.showPaint){
   state.undo.push(step);
   if(state.undo.length>HISTORY_LIMIT)state.undo.shift();
-  while(state.undo.length>1&&state.undo.reduce((n,item)=>n+(item.tiles?.size||0),0)>420)state.undo.shift();
+  while(state.undo.length>1&&state.undo.reduce((n,item)=>n+(item.tiles?.size||0),0)>120)state.undo.shift();
   state.redo=[]; // New edits invalidate redo, not navigation/cancelled clicks.
  }
  updateUndo();
@@ -497,7 +543,7 @@ function flushStrokePoint(){
  if(state.tool==='mountain'){
   const step=Math.max(8,state.size*pxUnit*state.peakSpacing*2);
   let next=step-state.strokeTravel,count=0;
-  while(next<=distance&&count<12){
+  while(next<=distance&&count<5){
    const ratio=next/distance;
    stampAt([old[0]+dx*ratio,old[1]+dy*ratio]);
    next+=step;count++;
@@ -505,7 +551,7 @@ function flushStrokePoint(){
   state.strokeTravel=(state.strokeTravel+distance)%step;
  }else{
   const step=clamp(state.size*pxUnit*(state.tool==='spray'?.37:.42),3.5,20);
-  const n=Math.min(10,Math.max(1,Math.ceil(distance/step)));
+  const n=Math.min(state.tool==='spray'?2:5,Math.max(1,Math.ceil(distance/step)));
   for(let i=1;i<=n;i++)stampAt([old[0]+dx*i/n,old[1]+dy*i/n]);
  }
  state.move=p;requestView();
@@ -517,7 +563,7 @@ function moveStroke(ev){const p=pos(ev);state.mouse=p;const circle=$('cursorPrev
   if(state.tool!=='decal'){pendingStrokePoint=p;requestView();}
   return;
  }
- if(state.baseLoaded&&!state.pressed){let hit=cast(...p);if(hit)status('UV '+hit.uv.map(n=>n.toFixed(3)).join(' / ')+(state.tool==='decal'?' · DECAL PREVIEW · click to place':' · ready'));if(state.tool==='decal')requestView();}
+ if(state.baseLoaded&&!state.pressed){const now=performance.now();if(now-lastStatusTime<70){if(state.tool==='decal')requestView();return;}lastStatusTime=now;let hit=cast(...p);if(hit)status('UV '+hit.uv.map(n=>n.toFixed(3)).join(' / ')+(state.tool==='decal'?' · DECAL PREVIEW · click to place':' · ready'));if(state.tool==='decal')requestView();}
 }
 function endStroke(ev){if(state.orbitActive){state.orbitActive=false;view.style.cursor=state.tool==='orbit'?'grab':'crosshair';}if(state.brushActive){if(ev&&ev.type==='pointerup')pendingStrokePoint=pos(ev);flushStrokePoint();state.brushActive=false;state.pressed=false;finishHistory();requestView();}state.move=null;}
 function buildStamp(kind){const c=document.createElement('canvas');c.width=c.height=512;const ctx=c.getContext('2d');ctx.strokeStyle='#071721';ctx.fillStyle='#071721';ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=12;
@@ -567,7 +613,14 @@ function setupUI(){setupSwatches();setupStamps();
  const drawer=$('uvDrawer');const toggleUV=(open)=>{drawer.classList.toggle('is-open',open);if(open){state.needMini=true;requestView();}$('uvToggle').setAttribute('aria-expanded',String(open));};
  $('uvToggle').addEventListener('click',()=>toggleUV(!drawer.classList.contains('is-open')));
  $('uvClose').addEventListener('click',()=>toggleUV(false));
- $('zoomIn').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*.78,4.5,60);requestView();});
+ const qualityButton=$('previewQualityBtn');
+ if(qualityButton)qualityButton.addEventListener('click',()=>{
+  const modes=['fast','balanced','detail'];
+  setPreviewQuality(modes[(modes.indexOf(state.quality)+1)%modes.length]);
+ });
+ setPreviewQuality(state.quality);
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.needsRender)scheduleFrame();});
+  $('zoomIn').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*.78,4.5,60);requestView();});
  $('zoomOut').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*1.28,4.5,60);requestView();});
  $('fitView').addEventListener('click',()=>setCamera('iso'));
  for(const b of document.querySelectorAll('.rail-button[data-tool]'))b.addEventListener('click',()=>setTool(b.dataset.tool));
