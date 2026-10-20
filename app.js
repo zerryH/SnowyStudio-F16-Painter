@@ -9,10 +9,15 @@ if(!gl){hint.textContent='WebGL2 unavailable · enable hardware acceleration in 
 const V=(x,y,z)=>[x,y,z], sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],mul=(a,s)=>[a[0]*s,a[1]*s,a[2]*s],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],len=a=>Math.hypot(...a),unit=a=>mul(a,1/(len(a)||1)),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const baseCanvas=document.createElement('canvas'),camCanvas=document.createElement('canvas'),paintCanvas=document.createElement('canvas'),outCanvas=document.createElement('canvas');
 for(const c of [baseCanvas,camCanvas,paintCanvas,outCanvas]){c.width=W;c.height=H;}
-const base=baseCanvas.getContext('2d',{willReadFrequently:true}), cam=camCanvas.getContext('2d'),paint=paintCanvas.getContext('2d'),out=outCanvas.getContext('2d',{willReadFrequently:true});
+const base=baseCanvas.getContext('2d',{willReadFrequently:true}), cam=camCanvas.getContext('2d'),paint=paintCanvas.getContext('2d',{willReadFrequently:true}),out=outCanvas.getContext('2d',{willReadFrequently:true});
 const state={tool:'brush',pane:'paint',lastPaintTool:'brush',style:'round',size:.24,opacity:1,hardness:1,sprayDensity:68,spraySpread:1.45,peakHeight:1.1,peakSpacing:1.5,color:'#101820',decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,strokeTravel:0,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
 const orbit={yaw:.87,pitch:.37,dist:21,target:[.65,.15,0],pos:[0,0,0],right:[0,0,0],up:[0,1,0],forward:[0,0,-1]};
 let program,tex,decalTex,locations,meshes=[],skin=null,lastTexUpload=0,lastMini=0,toastTimer=0,raf=0,lastPointerRay=null,baseAlpha=null,modelTri=0;
+const TILE=256,GRID=W/TILE,dirtyTiles=new Set();
+const patchCanvas=document.createElement('canvas');patchCanvas.width=patchCanvas.height=TILE;
+const patchCtx=patchCanvas.getContext('2d');
+let textureFull=true,activeEdit=null,pendingStrokePoint=null;
+
 function message(msg){toast.textContent=msg;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),3300);}
 function status(msg){hint.textContent=msg;}
 const hexRGB=hex=>{let x=parseInt(hex.replace('#',''),16);return[(x>>16)&255,(x>>8)&255,x&255]};
@@ -56,7 +61,7 @@ function initGL(){
  program=gl.createProgram();gl.attachShader(program,shader(gl.VERTEX_SHADER,vs));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fs));gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));
  locations={pos:gl.getAttribLocation(program,'aPos'),norm:gl.getAttribLocation(program,'aNorm'),uv:gl.getAttribLocation(program,'aUV'),vp:gl.getUniformLocation(program,'uVP'),tex:gl.getUniformLocation(program,'uTex'),tint:gl.getUniformLocation(program,'uTint'),useTex:gl.getUniformLocation(program,'uUseTex'),alpha:gl.getUniformLocation(program,'uAlpha'),decalSampler:gl.getUniformLocation(program,'uDecal'),previewOn:gl.getUniformLocation(program,'uPreviewOn'),decalCenter:gl.getUniformLocation(program,'uDecalCenter'),decalNormal:gl.getUniformLocation(program,'uDecalNormal'),decalRight:gl.getUniformLocation(program,'uDecalRight'),decalUp:gl.getUniformLocation(program,'uDecalUp'),decalWidth:gl.getUniformLocation(program,'uDecalWidth'),decalAspect:gl.getUniformLocation(program,'uDecalAspect'),decalAngle:gl.getUniformLocation(program,'uDecalAngle'),decalOpacity:gl.getUniformLocation(program,'uDecalOpacity')};
  gl.useProgram(program);gl.uniform1i(locations.tex,0);gl.uniform1i(locations.decalSampler,1);
- tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+ tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([190,207,211,255]));
  gl.activeTexture(gl.TEXTURE1);decalTex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,decalTex);
  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
@@ -86,9 +91,67 @@ function vpMatrix(aspect){cameraBasis();const r=orbit.right,u=orbit.up,f=orbit.f
  const result=new Float32Array(16);for(let c=0;c<4;c++)for(let row=0;row<4;row++){result[c*4+row]=0;for(let k=0;k<4;k++)result[c*4+row]+=proj[k*4+row]*view[c*4+k];}return result;
 }
 function requestView(){state.needsRender=true;if(!raf)raf=requestAnimationFrame(frame);}
-function compose(){out.clearRect(0,0,W,H);out.drawImage(baseCanvas,0,0);if(state.showCamo)out.drawImage(camCanvas,0,0);if(state.showPaint)out.drawImage(paintCanvas,0,0);}
-function refreshTexture(){compose();gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,outCanvas);gl.generateMipmap(gl.TEXTURE_2D);state.dirtyTex=false;state.needMini=true;lastTexUpload=performance.now();}
-function paintDirty(){state.dirtyTex=true;state.needMini=true;requestView();}
+function compose(){
+ out.clearRect(0,0,W,H);
+ out.drawImage(baseCanvas,0,0);
+ if(state.showCamo)out.drawImage(camCanvas,0,0);
+ if(state.showPaint)out.drawImage(paintCanvas,0,0);
+}
+// Called for full-layer changes (camo, base texture, show/hide layer, project).
+function paintDirty(){
+ textureFull=true;dirtyTiles.clear();state.dirtyTex=true;state.needMini=true;requestView();
+}
+function markTile(id){
+ if(id<0||id>=GRID*GRID)return;
+ // First touch in an edit captures the actual old pixel state *before* painting.
+ if(activeEdit&&activeEdit.kind==='paint'&&!activeEdit.tiles.has(id)){
+  const x=(id%GRID)*TILE,y=Math.floor(id/GRID)*TILE;
+  activeEdit.tiles.set(id,paint.getImageData(x,y,TILE,TILE));
+ }
+ dirtyTiles.add(id);
+ state.dirtyTex=true;state.needMini=true;requestView();
+}
+function markUV(m,worldRadius){
+ const ux=m.uv.map(v=>v[0]),uy=m.uv.map(v=>v[1]);
+ const cx=m.mat[4],cy=m.mat[5],margin=4;
+ const rx=worldRadius*(Math.abs(m.mat[0])+Math.abs(m.mat[2]))+margin;
+ const ry=worldRadius*(Math.abs(m.mat[1])+Math.abs(m.mat[3]))+margin;
+ const left=Math.max(0,Math.max(Math.min(...ux),cx-rx));
+ const top=Math.max(0,Math.max(Math.min(...uy),cy-ry));
+ const right=Math.min(W,Math.min(Math.max(...ux),cx+rx));
+ const bottom=Math.min(H,Math.min(Math.max(...uy),cy+ry));
+ if(right<=left||bottom<=top)return;
+ const x0=Math.floor(left/TILE),x1=Math.min(GRID-1,Math.floor((right-0.001)/TILE));
+ const y0=Math.floor(top/TILE),y1=Math.min(GRID-1,Math.floor((bottom-0.001)/TILE));
+ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)markTile(y*GRID+x);
+}
+function refreshTexture(){
+ gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);
+ gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+ if(textureFull){
+  compose();
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,outCanvas);
+  textureFull=false;dirtyTiles.clear();state.dirtyTex=false;
+ }else{
+  // Only upload regions actually touched by the brush, instead of 16M pixels.
+  let batch=0;
+  for(const id of dirtyTiles){
+   dirtyTiles.delete(id);
+   const x=(id%GRID)*TILE,y=Math.floor(id/GRID)*TILE;
+   out.clearRect(x,y,TILE,TILE);
+   out.drawImage(baseCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
+   if(state.showCamo)out.drawImage(camCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
+   if(state.showPaint)out.drawImage(paintCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
+   patchCtx.clearRect(0,0,TILE,TILE);
+   patchCtx.drawImage(outCanvas,x,y,TILE,TILE,0,0,TILE,TILE);
+   // Canvas input has flipped Y; the destination sub-region must match it.
+   gl.texSubImage2D(gl.TEXTURE_2D,0,x,H-y-TILE,gl.RGBA,gl.UNSIGNED_BYTE,patchCanvas);
+   if(++batch>=8)break;
+  }
+  state.dirtyTex=dirtyTiles.size>0;
+ }
+ lastTexUpload=performance.now();state.needsRender=true;state.needMini=true;
+}
 function setDecalImage(img,label){
  state.image=img;
  const preview=$('selectedDecalArt');
@@ -122,17 +185,17 @@ function decalPreviewUniforms(){
  gl.uniform1f(locations.decalAngle,state.decalRotate*Math.PI/180);
  gl.uniform1f(locations.decalOpacity,Math.min(0.86,Math.max(0.12,state.opacity*0.78)));
 }
-function frame(time){raf=0;const w=wrap.clientWidth,h=wrap.clientHeight,dpr=Math.min(window.devicePixelRatio||1,2);
+function frame(time){raf=0;if(state.brushActive&&pendingStrokePoint)flushStrokePoint();const w=wrap.clientWidth,h=wrap.clientHeight,dpr=Math.min(window.devicePixelRatio||1,1.5);
  const dw=Math.round(w*dpr),dh=Math.round(h*dpr);if(view.width!==dw||view.height!==dh){view.width=dw;view.height=dh;gl.viewport(0,0,dw,dh);state.needsRender=true;}
- if(state.dirtyTex&&state.baseLoaded&&(!state.pressed||time-lastTexUpload>75)){refreshTexture();state.needsRender=true;}
- if(state.needMini&&state.baseLoaded&&time-lastMini>420){miniCtx.clearRect(0,0,440,440);miniCtx.drawImage(outCanvas,0,0,440,440);state.needMini=false;lastMini=time;}
+ if(state.dirtyTex&&state.baseLoaded&&(!state.pressed||time-lastTexUpload>42)){refreshTexture();state.needsRender=true;}
+ if(state.needMini&&state.baseLoaded&&!state.pressed&&$('uvDrawer').classList.contains('is-open')&&time-lastMini>400){miniCtx.clearRect(0,0,440,440);miniCtx.drawImage(outCanvas,0,0,440,440);state.needMini=false;lastMini=time;}
  if(state.needsRender){
   gl.viewport(0,0,dw,dh);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   gl.useProgram(program);gl.uniformMatrix4fv(locations.vp,false,vpMatrix(w/h));gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,decalTex);decalPreviewUniforms();gl.activeTexture(gl.TEXTURE0);
   for(const m of meshes){if(m.kind==='glass')continue;gl.bindVertexArray(m.vao);gl.uniform1f(locations.useTex,m.kind==='skin'?1:0);gl.uniform1f(locations.alpha,1);gl.uniform1f(locations.previewOn,m.kind==='skin'&&state.tool==='decal'&&state.previewHit&&state.previewInside&&!state.orbitActive&&!state.pressed?1:0);let c=m.kind==='cockpit'?[.14,.19,.24]:[.4,.48,.53];gl.uniform3fv(locations.tint,c);gl.drawElements(gl.TRIANGLES,m.idx.length,gl.UNSIGNED_INT,0);}
   gl.uniform1f(locations.previewOn,0);gl.depthMask(false);for(const m of meshes){if(m.kind!=='glass')continue;gl.bindVertexArray(m.vao);gl.uniform1f(locations.useTex,0);gl.uniform1f(locations.alpha,.35);gl.uniform3fv(locations.tint,[.16,.33,.39]);gl.drawElements(gl.TRIANGLES,m.idx.length,gl.UNSIGNED_INT,0);}gl.depthMask(true);gl.bindVertexArray(null);state.needsRender=false;
  }
- if(state.dirtyTex||state.needMini)requestView();
+ if(state.dirtyTex)requestView();
 }
 function getRay(x,y){cameraBasis();const w=wrap.clientWidth,h=wrap.clientHeight,ax=(2*x/w-1)*w/h*Math.tan(Math.PI/6),ay=(1-2*y/h)*Math.tan(Math.PI/6);return {pos:orbit.pos,dir:unit(add(orbit.forward,add(mul(orbit.right,ax),mul(orbit.up,ay))))};}
 function nodeRayBox(minx,miny,minz,maxx,maxy,maxz,r,best){let tlo=0,thi=best;
@@ -194,6 +257,7 @@ function dab(hit,radius,params={}){
  for(const tri of tris){
   const m=projectTriangle(tri,hit,reach,peak?'peak':'brush');
   if(!m)continue;
+  markUV(m,peak?radius*Math.max(1.3,state.peakHeight)*2:reach*1.2);
   paint.save();clipUV(paint,m.uv);paint.setTransform(...m.mat);
   paint.globalAlpha=state.opacity;
   paint.globalCompositeOperation=erase?'destination-out':'source-over';
@@ -244,13 +308,13 @@ function dab(hit,radius,params={}){
   }
   paint.restore();count++;
  }
- if(count)paintDirty();return count;
+ return count;
 }
 function stampDecal(hit){if(!hit||!state.image)return;const size=state.decalSize,halfDiag=size*.85;let count=0;
- for(const tri of sphereQuery(hit.point,halfDiag+.03)){const m=projectTriangle(tri,hit,halfDiag,'decal');if(!m)continue;paint.save();clipUV(paint,m.uv);paint.setTransform(...m.mat);paint.globalAlpha=state.opacity;
+ for(const tri of sphereQuery(hit.point,halfDiag+.03)){const m=projectTriangle(tri,hit,halfDiag,'decal');if(!m)continue;markUV(m,size*Math.max(1,(state.image.naturalHeight||state.image.height)/(state.image.naturalWidth||state.image.width))*1.3);paint.save();clipUV(paint,m.uv);paint.setTransform(...m.mat);paint.globalAlpha=state.opacity;
  paint.rotate(state.decalRotate*Math.PI/180);let ih=state.image.naturalHeight||state.image.height,iw=state.image.naturalWidth||state.image.width,ratio=ih/iw;
  paint.drawImage(state.image,-size/2,-size*ratio/2,size,size*ratio);paint.restore();count++;
- }if(count)paintDirty();else message('Decal missed the paintable surface; try a flatter view.');}
+ }if(!count)message('Decal missed the paintable surface; try a flatter view.');}
 const palette=['#101820','#000000','#273c4e','#6c8494','#ffffff','#d5f5fa','#a1dee7','#6a9ac1','#194f69','#d8ded6','#c6b3a1','#9b7160','#ec6d51','#f4ca63','#9b9dd4','#8bcbb3'];
 function setupSwatches(){const el=$('swatches');for(let c of palette){let b=document.createElement('button');b.className='swatch';b.style.background=c;b.title=c;b.addEventListener('click',()=>{state.color=c;$('colorPick').value=c;updateColors();drawToolPreview();});el.append(b);}updateColors();}
 function updateColors(){$('colorCode').textContent=state.color.toUpperCase();for(const e of document.querySelectorAll('.swatch'))e.classList.toggle('active',e.title.toLowerCase()===state.color.toLowerCase());}
@@ -343,7 +407,7 @@ function setTool(t,requestedPane=null){
  requestView();
 }
 function setCamera(k){if(k==='iso'){orbit.yaw=.87;orbit.pitch=.37;orbit.dist=21;}if(k==='top'){orbit.yaw=0;orbit.pitch=1.51;}if(k==='bottom'){orbit.yaw=0;orbit.pitch=-1.51;}if(k==='right'){orbit.yaw=0;orbit.pitch=.03;}if(k==='left'){orbit.yaw=Math.PI;orbit.pitch=.03;}if(k==='front'){orbit.yaw=Math.PI/2;orbit.pitch=.015;}for(let e of document.querySelectorAll('[data-camera]'))e.classList.toggle('active',e.dataset.camera===k);requestView();}
-function selectCamo(name){pushUndo();state.camo=name;renderCamo();document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x.dataset.camo===name));paintDirty();message(name==='none'?'Camouflage removed':name[0].toUpperCase()+name.slice(1)+' camouflage applied');}
+function selectCamo(name){if(name===state.camo)return;beginHistory('camo');state.camo=name;renderCamo();document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x.dataset.camo===name));paintDirty();message(name==='none'?'Camouflage removed':name[0].toUpperCase()+name.slice(1)+' camouflage applied');finishHistory();}
 function pseudo(seed){let s=seed|0;return()=>{s=(Math.imul(s,1664525)+1013904223)|0;return(s>>>0)/4294967296;};}
 const camoPalettes={arctic:['#f0f9fa','#a4d4e5','#739cbb','#dcecef'],alpine:['#eef6fb','#a1dbeb','#8faed1','#d8eef4'],digital:['#d5e8e9','#8cb5c5','#537f95','#b5dbd5'],naval:['#b8cbd3','#637c8d','#31485a','#8daab2'],desert:['#d0c1a0','#8e9878','#a48c70','#eee2c8']};
 function renderCamo(){cam.clearRect(0,0,W,H);if(state.camo==='none')return;
@@ -360,40 +424,102 @@ function renderCamo(){cam.clearRect(0,0,W,H);if(state.camo==='none')return;
   }cam.closePath();cam.fill();
  }
  cam.restore();}
-function pushUndo(){if(!state.baseLoaded)return;try{state.undo.push({paint:paintCanvas.toDataURL('image/png'),camo:camCanvas.toDataURL('image/png'),camoName:state.camo});if(state.undo.length>14)state.undo.shift();state.redo=[];updateUndo();}catch(e){console.warn('Undo snapshot skipped',e);}}
-function updateUndo(){$('undoBtn').disabled=!state.undo.length;$('redoBtn').disabled=!state.redo.length;}
-function snapshotNow(){return {paint:paintCanvas.toDataURL('image/png'),camo:camCanvas.toDataURL('image/png'),camoName:state.camo};}
+const HISTORY_LIMIT=24;
+function updateUndo(){
+ $('undoBtn').disabled=!state.undo.length||state.pressed;
+ $('redoBtn').disabled=!state.redo.length||state.pressed;
+ $('undoBtn').title='Undo ('+state.undo.length+' actions) · Ctrl+Z';
+ $('redoBtn').title='Redo ('+state.redo.length+' actions) · Ctrl+Y';
+}
+function beginHistory(kind='paint'){
+ if(activeEdit)finishHistory();
+ activeEdit={kind,tiles:new Map(),before:{camo:state.camo,strength:state.camoStrength,showCamo:state.showCamo,showPaint:state.showPaint}};
+}
+function finishHistory(){
+ if(!activeEdit)return;
+ const step=activeEdit;activeEdit=null;
+ step.after={camo:state.camo,strength:state.camoStrength,showCamo:state.showCamo,showPaint:state.showPaint};
+ if(step.tiles.size||step.before.camo!==step.after.camo||step.before.strength!==step.after.strength||step.before.showCamo!==step.after.showCamo||step.before.showPaint!==step.after.showPaint){
+  state.undo.push(step);
+  if(state.undo.length>HISTORY_LIMIT)state.undo.shift();
+  while(state.undo.length>1&&state.undo.reduce((n,item)=>n+(item.tiles?.size||0),0)>420)state.undo.shift();
+  state.redo=[]; // New edits invalidate redo, not navigation/cancelled clicks.
+ }
+ updateUndo();
+}
+function swapHistoryTiles(step){
+ const opposite=new Map();
+ for(const [id,bytes] of step.tiles){
+  const x=(id%GRID)*TILE,y=Math.floor(id/GRID)*TILE;
+  opposite.set(id,paint.getImageData(x,y,TILE,TILE));
+  paint.putImageData(bytes,x,y);
+  // No active stroke during undo; marking these tiles does not capture new history.
+  markTile(id);
+ }
+ return {kind:'paint',tiles:opposite,before:step.before,after:step.after};
+}
+function applyCamoHistory(settings){
+ state.camo=settings.camo;state.camoStrength=settings.strength;
+ state.showCamo=settings.showCamo;state.showPaint=settings.showPaint;
+ $('showCamo').checked=state.showCamo;$('showPaint').checked=state.showPaint;
+ $('camoStrength').value=String(Math.round(state.camoStrength*100));
+ $('camoOut').textContent=$('camoStrength').value+'%';
+ document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b.dataset.camo===state.camo));
+ renderCamo();paintDirty();
+}
+function undo(){
+ if(state.pressed||!state.undo.length)return;
+ const step=state.undo.pop();
+ if(step.kind==='camo'||step.kind==='layers'){applyCamoHistory(step.before);state.redo.push(step);}
+ else state.redo.push(swapHistoryTiles(step));
+ updateUndo();message('Undo');
+}
+function redo(){
+ if(state.pressed||!state.redo.length)return;
+ const step=state.redo.pop();
+ if(step.kind==='camo'||step.kind==='layers'){applyCamoHistory(step.after);state.undo.push(step);}
+ else state.undo.push(swapHistoryTiles(step));
+ updateUndo();message('Redo');
+}
 function imageFrom(src){return new Promise((ok,no)=>{let im=new Image();im.onload=()=>ok(im);im.onerror=no;im.src=src;});}
-async function restoreSnapshot(s){try{const [a,b]=await Promise.all([imageFrom(s.paint),imageFrom(s.camo)]);paint.clearRect(0,0,W,H);cam.clearRect(0,0,W,H);paint.drawImage(a,0,0);cam.drawImage(b,0,0);state.camo=s.camoName;document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x.dataset.camo===state.camo));paintDirty();}catch(e){message('Could not restore history');}}
-async function undo(){if(!state.undo.length||state.pressed)return;state.redo.push(snapshotNow());await restoreSnapshot(state.undo.pop());updateUndo();message('Undo');}
-async function redo(){if(!state.redo.length||state.pressed)return;state.undo.push(snapshotNow());await restoreSnapshot(state.redo.pop());updateUndo();message('Redo');}
 function pos(ev){let r=view.getBoundingClientRect();return [ev.clientX-r.left,ev.clientY-r.top];}
 function stampAt(posn){let hit=cast(...posn);if(!hit){status('Outside paintable skin');return null;}if(state.tool==='decal')stampDecal(hit);else dab(hit,state.size,{}) ;status(`${hit.uv[0].toFixed(3)}, ${hit.uv[1].toFixed(3)} UV · ${state.tool.toUpperCase()}`);return hit;}
 function beginStroke(ev){if(ev.button===2||ev.altKey||ev.shiftKey&&ev.button===1||state.tool==='orbit'||ev.buttons===4||ev.buttons===2){state.orbitActive=true;state.panActive=ev.buttons===4;view.setPointerCapture(ev.pointerId);state.move=pos(ev);view.style.cursor='grabbing';return;}
  if(ev.button!==0||!state.baseLoaded)return;const p=pos(ev),hit=cast(...p);if(!hit){message('Click on the painted fuselage or wings, not empty space.');return;}
- pushUndo();view.setPointerCapture(ev.pointerId);state.pressed=true;state.strokeTravel=0;state.move=p;state.lastStamp=p;state.brushActive=true;stampAt(p);requestView();}
-function moveStroke(ev){const p=pos(ev);state.mouse=p;const circle=$('cursorPreview');circle.style.left=p[0]+'px';circle.style.top=p[1]+'px';circle.style.display=ev.pointerType==='touch'||state.tool==='decal'||state.tool==='orbit'?'none':'block';state.previewInside=true;
- const pxRadius=state.tool==='decal'?state.decalSize:state.size;const scale=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);const d=clamp(pxRadius*scale*2,6,260);circle.style.width=d+'px';circle.style.height=d+'px';
- if(state.orbitActive&&state.move){const dx=p[0]-state.move[0],dy=p[1]-state.move[1];if(state.panActive){cameraBasis();orbit.target=add(orbit.target,add(mul(orbit.right,-dx*orbit.dist*.0014),mul(orbit.up,dy*orbit.dist*.0014)));}else{orbit.yaw-=dx*.008;orbit.pitch=clamp(orbit.pitch+dy*.008,-1.55,1.55);}state.move=p;document.querySelectorAll('.camera-btn').forEach(b=>b.classList.remove('active'));requestView();return;}
- if(state.brushActive&&state.move){if(state.tool==='decal'){return;}const old=state.move;const dx=p[0]-old[0],dy=p[1]-old[1],distance=Math.hypot(dx,dy);const pxUnit=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);if(state.tool==='mountain'){
+ beginHistory('paint');view.setPointerCapture(ev.pointerId);state.pressed=true;state.strokeTravel=0;state.move=p;state.lastStamp=p;state.brushActive=true;stampAt(p);requestView();}
+function flushStrokePoint(){
+ if(!pendingStrokePoint||!state.brushActive||!state.move)return;
+ const p=pendingStrokePoint;pendingStrokePoint=null;
+ if(state.tool==='decal')return;
+ const old=state.move,dx=p[0]-old[0],dy=p[1]-old[1],distance=Math.hypot(dx,dy);
+ if(distance<.001)return;
+ const pxUnit=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);
+ if(state.tool==='mountain'){
   const step=Math.max(8,state.size*pxUnit*state.peakSpacing*2);
-  let next=step-state.strokeTravel;
-  let count=0;
-  while(next<=distance&&count<35){
-   let ratio=next/distance;
+  let next=step-state.strokeTravel,count=0;
+  while(next<=distance&&count<12){
+   const ratio=next/distance;
    stampAt([old[0]+dx*ratio,old[1]+dy*ratio]);
    next+=step;count++;
   }
   state.strokeTravel=(state.strokeTravel+distance)%step;
  }else{
-  const step=clamp(state.size*pxUnit*(state.tool==='spray'?.25:.31),2.5,15);
-  const n=Math.min(35,Math.max(1,Math.ceil(distance/step)));
+  const step=clamp(state.size*pxUnit*(state.tool==='spray'?.37:.42),3.5,20);
+  const n=Math.min(10,Math.max(1,Math.ceil(distance/step)));
   for(let i=1;i<=n;i++)stampAt([old[0]+dx*i/n,old[1]+dy*i/n]);
  }
- state.move=p;requestView();return;}
+ state.move=p;requestView();
+}
+function moveStroke(ev){const p=pos(ev);state.mouse=p;const circle=$('cursorPreview');circle.style.left=p[0]+'px';circle.style.top=p[1]+'px';circle.style.display=ev.pointerType==='touch'||state.tool==='decal'||state.tool==='orbit'?'none':'block';state.previewInside=true;
+ const pxRadius=state.tool==='decal'?state.decalSize:state.size;const scale=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);const d=clamp(pxRadius*scale*2,6,260);circle.style.width=d+'px';circle.style.height=d+'px';
+ if(state.orbitActive&&state.move){const dx=p[0]-state.move[0],dy=p[1]-state.move[1];if(state.panActive){cameraBasis();orbit.target=add(orbit.target,add(mul(orbit.right,-dx*orbit.dist*.0014),mul(orbit.up,dy*orbit.dist*.0014)));}else{orbit.yaw-=dx*.008;orbit.pitch=clamp(orbit.pitch+dy*.008,-1.55,1.55);}state.move=p;document.querySelectorAll('.camera-btn').forEach(b=>b.classList.remove('active'));requestView();return;}
+ if(state.brushActive&&state.move){
+  if(state.tool!=='decal'){pendingStrokePoint=p;requestView();}
+  return;
+ }
  if(state.baseLoaded&&!state.pressed){let hit=cast(...p);if(hit)status('UV '+hit.uv.map(n=>n.toFixed(3)).join(' / ')+(state.tool==='decal'?' · DECAL PREVIEW · click to place':' · ready'));if(state.tool==='decal')requestView();}
 }
-function endStroke(ev){if(state.orbitActive){state.orbitActive=false;view.style.cursor=state.tool==='orbit'?'grab':'crosshair';}if(state.brushActive){state.brushActive=false;state.pressed=false;paintDirty();}state.move=null;}
+function endStroke(ev){if(state.orbitActive){state.orbitActive=false;view.style.cursor=state.tool==='orbit'?'grab':'crosshair';}if(state.brushActive){if(ev&&ev.type==='pointerup')pendingStrokePoint=pos(ev);flushStrokePoint();state.brushActive=false;state.pressed=false;finishHistory();requestView();}state.move=null;}
 function buildStamp(kind){const c=document.createElement('canvas');c.width=c.height=512;const ctx=c.getContext('2d');ctx.strokeStyle='#071721';ctx.fillStyle='#071721';ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=12;
  const L=(a)=>{ctx.beginPath();a.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.stroke();};
  if(kind==='alpine'){L([[30,388],[130,235],[190,305],[255,101],[315,283],[370,210],[486,381]]);L([[113,259],[147,276],[170,249]]);L([[230,150],[258,182],[279,161]]);L([[365,229],[389,249]]);L([[55,411],[170,411],[245,390],[355,411],[465,412]]);}
@@ -430,7 +556,7 @@ async function exportSkin(){if(!state.baseLoaded)return;const b=$('busyModal');b
  let root='SnowyStudio_F16A_MLU/';let zip=await writeZIP([{name:root+'f_16a_block_20_mlu.tga',data:bytes},{name:root+'f_16a_block_20_mlu.blk',data:latinBytes(blk)},{name:root+'README.txt',data:latinBytes(readme)}]);makeDownload(zip,'SnowyStudio_F16A_MLU_WarThunder.zip','application/zip');message('War Thunder skin exported! Extract into UserSkins.');
  }catch(e){console.error(e);message('Export failed: '+e.message);alert('Export failed: '+e.message);}finally{b.classList.remove('show');}}
 async function saveProject(){if(!state.baseLoaded)return;const obj={format:'snowystudio-project',version:1,created:new Date().toISOString(),aircraft:'f_16a_block_20_mlu',settings:{camo:state.camo,camoStrength:state.camoStrength},base:baseCanvas.toDataURL('image/png'),camo:camCanvas.toDataURL('image/png'),paint:paintCanvas.toDataURL('image/png')};makeDownload(latinBytes(JSON.stringify(obj)),'SnowyStudio_F16_MLU.snowyproject.json','application/json');message('Project saved with editable artwork layers');}
-async function openProject(f){if(!f)return;try{const obj=JSON.parse(await f.text());if(obj.format!=='snowystudio-project'||obj.aircraft!=='f_16a_block_20_mlu')throw Error('Not an F-16 SnowyStudio project');const images=await Promise.all([imageFrom(obj.base),imageFrom(obj.camo),imageFrom(obj.paint)]);base.clearRect(0,0,W,H);cam.clearRect(0,0,W,H);paint.clearRect(0,0,W,H);base.drawImage(images[0],0,0,W,H);cam.drawImage(images[1],0,0,W,H);paint.drawImage(images[2],0,0,W,H);state.camo=obj.settings?.camo||'none';state.camoStrength=obj.settings?.camoStrength||.78;state.undo=[];state.redo=[];updateUndo();document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x.dataset.camo===state.camo));paintDirty();message('Project loaded successfully');}catch(e){message('Could not load project: '+e.message);}}
+async function openProject(f){if(!f)return;try{const obj=JSON.parse(await f.text());if(obj.format!=='snowystudio-project'||obj.aircraft!=='f_16a_block_20_mlu')throw Error('Not an F-16 SnowyStudio project');const images=await Promise.all([imageFrom(obj.base),imageFrom(obj.camo),imageFrom(obj.paint)]);base.clearRect(0,0,W,H);cam.clearRect(0,0,W,H);paint.clearRect(0,0,W,H);base.drawImage(images[0],0,0,W,H);cam.drawImage(images[1],0,0,W,H);paint.drawImage(images[2],0,0,W,H);state.camo=obj.settings?.camo||'none';state.camoStrength=obj.settings?.camoStrength||.78;activeEdit=null;state.undo=[];state.redo=[];updateUndo();document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x.dataset.camo===state.camo));paintDirty();message('Project loaded successfully');}catch(e){message('Could not load project: '+e.message);}}
 function setupUI(){setupSwatches();setupStamps();
  for(const e of document.querySelectorAll('.sidebar-tab'))e.addEventListener('click',()=>{
   const pane=e.dataset.paneTarget;
@@ -438,7 +564,7 @@ function setupUI(){setupSwatches();setupStamps();
   else if(pane==='decals')setTool('decal');
   else setTool('orbit',pane); // Camo / Layers must never paint during navigation.
  });
- const drawer=$('uvDrawer');const toggleUV=(open)=>{drawer.classList.toggle('is-open',open);$('uvToggle').setAttribute('aria-expanded',String(open));};
+ const drawer=$('uvDrawer');const toggleUV=(open)=>{drawer.classList.toggle('is-open',open);if(open){state.needMini=true;requestView();}$('uvToggle').setAttribute('aria-expanded',String(open));};
  $('uvToggle').addEventListener('click',()=>toggleUV(!drawer.classList.contains('is-open')));
  $('uvClose').addEventListener('click',()=>toggleUV(false));
  $('zoomIn').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*.78,4.5,60);requestView();});
@@ -452,10 +578,10 @@ function setupUI(){setupSwatches();setupStamps();
  bindRange('peakHeight','peakHeight','peakHeightOut');
  bindRange('peakSpacing','peakSpacing','peakSpacingOut');
  bindRange('brushSize','size','sizeOut');bindRange('opacity','opacity','opacityOut');bindRange('hardness','hardness','hardnessOut');bindRange('decalSize','decalSize','decalSizeOut');bindRange('decalRotate','decalRotate','decalRotateOut');
- $('camoStrength').addEventListener('input',()=>{$('camoOut').textContent=$('camoStrength').value+'%';});$('camoStrength').addEventListener('change',()=>{pushUndo();state.camoStrength=+$('camoStrength').value/100;renderCamo();paintDirty();});
+ $('camoStrength').addEventListener('input',()=>{$('camoOut').textContent=$('camoStrength').value+'%';});$('camoStrength').addEventListener('change',()=>{const v=+$('camoStrength').value/100;if(v===state.camoStrength)return;beginHistory('camo');state.camoStrength=v;renderCamo();paintDirty();finishHistory();});
  $('colorPick').addEventListener('input',e=>{state.color=e.target.value;updateColors();drawToolPreview();});
  for(const b of document.querySelectorAll('.preset'))b.addEventListener('click',()=>selectCamo(b.dataset.camo));
- $('showCamo').addEventListener('change',e=>{state.showCamo=e.target.checked;paintDirty();});$('showPaint').addEventListener('change',e=>{state.showPaint=e.target.checked;paintDirty();});
+ $('showCamo').addEventListener('change',e=>{beginHistory('layers');state.showCamo=e.target.checked;paintDirty();finishHistory();});$('showPaint').addEventListener('change',e=>{beginHistory('layers');state.showPaint=e.target.checked;paintDirty();finishHistory();});
  $('undoBtn').addEventListener('click',undo);$('redoBtn').addEventListener('click',redo);
  $('decalInput').addEventListener('change',e=>loadImageFile(e.target.files[0],img=>{setDecalImage(img,e.target.files[0].name);document.querySelectorAll('.stamp').forEach(x=>x.classList.remove('active'));setTool('decal');$('decalHint').textContent='Previewing '+e.target.files[0].name+' — click model to apply it';}));
  $('baseInput').addEventListener('change',e=>importBase(e.target.files[0]));$('importBaseBtn').addEventListener('click',()=>$('baseInput').click());

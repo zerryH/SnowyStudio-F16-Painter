@@ -20,6 +20,7 @@ const map={'toolHeading':{textContent:''},'toolSubtitle':{textContent:''},'brush
 const document={
  querySelectorAll(s){
   if(s==='.panel.left > .section[data-pane]')return sections;
+  if(s==='[data-tool-config]')return [];
   if(s==='.sidebar-tab')return tabs;
   if(s==='.rail-button[data-tool]')return tools;
   throw Error('Unexpected selector: '+s);

@@ -13,7 +13,7 @@ const log=[];
 const context={
  state:{tool:'brush',size:.24,color:'#000000',opacity:1,hardness:1,style:'round',sprayDensity:42,spraySpread:1.2,peakHeight:1.1,peakSpacing:1.5},
  hexRGB:()=>[0,0,0],sphereQuery:()=>[3],projectTriangle:(tri,hit,r,mode)=>{log.push('mode:'+mode);return {uv:[[0,0],[1,0],[0,1]],mat:[1,0,0,1,0,0]};},
- clipUV:()=>{},paintDirty:()=>{},TAU:Math.PI*2,Math,console,
+ clipUV:()=>{},markUV:()=>{},paintDirty:()=>{},TAU:Math.PI*2,Math,console,
  paint:new Proxy({}, {set(obj,k,v){if(k==='globalCompositeOperation')log.push('composite:'+v);obj[k]=v;return true;},get(obj,k){
  if(k==='createRadialGradient')return ()=>({addColorStop(){}});
  if(['save','restore','setTransform','beginPath','arc','fill','stroke','moveTo','lineTo','bezierCurveTo'].includes(k))return (...args)=>{if(['arc','fill','stroke','lineTo'].includes(k))log.push(k);};
