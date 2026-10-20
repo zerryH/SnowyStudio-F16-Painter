@@ -12,7 +12,7 @@ const V=(x,y,z)=>[x,y,z], sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],add=(a,b)=>
 const baseCanvas=document.createElement('canvas'),camCanvas=document.createElement('canvas'),paintCanvas=document.createElement('canvas'),outCanvas=document.createElement('canvas');
 for(const c of [baseCanvas,camCanvas,paintCanvas,outCanvas]){c.width=W;c.height=H;}
 const base=baseCanvas.getContext('2d',{willReadFrequently:true}), cam=camCanvas.getContext('2d'),paint=paintCanvas.getContext('2d',{willReadFrequently:true}),out=outCanvas.getContext('2d',{willReadFrequently:true});
-const state={tool:'brush',pane:'paint',quality:'fast',lastPaintTool:'brush',style:'round',size:.24,opacity:1,hardness:1,sprayDensity:68,spraySpread:1.45,peakHeight:1.1,peakSpacing:1.5,color:'#101820',colorAlpha:1,decalTint:false,decalOpacity:1,camoTint:false,decalRenderSource:null,decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,strokeTravel:0,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
+const state={tool:'brush',pane:'paint',quality:'fast',lastPaintTool:'brush',style:'round',size:.24,opacity:1,hardness:1,sprayDensity:68,spraySpread:1.45,peakHeight:1.1,peakSpacing:1.5,color:'#101820',colorAlpha:1,decalTint:false,decalOpacity:1,camoTint:false,decalRenderSource:null,decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,shapeStart:null,shapeCurrent:null,shapeFilled:false,strokeTravel:0,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
 const orbit={yaw:.87,pitch:.37,dist:21,target:[.65,.15,0],pos:[0,0,0],right:[0,0,0],up:[0,1,0],forward:[0,0,-1]};
 let program,tex,decalTex,locations,meshes=[],skin=null,lastTexUpload=0,lastMini=0,toastTimer=0,raf=0,lastPointerRay=null,baseAlpha=null,modelTri=0;
 const TILE=256,GRID=W/TILE,dirtyTiles=new Set();
@@ -21,7 +21,8 @@ const patchCtx=patchCanvas.getContext('2d');
 const renderProfiles={
  fast:{textureSize:1024,maxPixels:850000,maxDpr:.9,paintFps:30,orbitFps:38,idleFps:35,label:'Fast'},
  balanced:{textureSize:2048,maxPixels:1650000,maxDpr:1.1,paintFps:30,orbitFps:45,idleFps:50,label:'Balanced'},
- detail:{textureSize:4096,maxPixels:2700000,maxDpr:1.5,paintFps:40,orbitFps:60,idleFps:60,label:'Detail'}
+ detail:{textureSize:4096,maxPixels:2700000,maxDpr:1.5,paintFps:40,orbitFps:60,idleFps:60,label:'Detail'},
+ custom:{textureSize:1024,maxPixels:850000,maxDpr:1,paintFps:30,orbitFps:40,idleFps:40,label:'Custom'}
 };
 const previewCanvas=document.createElement('canvas');
 const previewCtx=previewCanvas.getContext('2d');
@@ -31,22 +32,88 @@ function qualityProfile(){return renderProfiles[state.quality]||renderProfiles.f
 function setPreviewQuality(next){
  if(!renderProfiles[next])return;
  state.quality=next;
+ try{localStorage.setItem('SnowyStudio_quality_mode',next);}catch(e){}
  const profile=qualityProfile();
+ const textureChanged=previewSize!==profile.textureSize||previewCanvas.width!==profile.textureSize;
  previewSize=profile.textureSize;
- previewCanvas.width=previewCanvas.height=previewSize;
- const subTile=TILE*previewSize/W;
- patchCanvas.width=patchCanvas.height=subTile;
- textureFull=true;
- dirtyTiles.clear();
- state.dirtyTex=true;state.needsRender=true;
+ if(textureChanged){
+  previewCanvas.width=previewCanvas.height=previewSize;
+  const subTile=TILE*previewSize/W;
+  patchCanvas.width=patchCanvas.height=subTile;
+  textureFull=true;dirtyTiles.clear();state.dirtyTex=true;
+ }
+ state.needsRender=true;
  const btn=$('previewQualityBtn');
- if(btn){btn.textContent='⚡ '+profile.label;btn.title='3D preview: '+profile.label+' · '+previewSize+'px texture. Export stays 4096px. Click for next mode.';}
+ if(btn){btn.textContent='⚡ '+profile.label;btn.title='3D preview: '+profile.label+' · '+previewSize+'px texture. Export stays 4096px. Click to configure.';}
  const info=$('perfModeText');
  if(info)info.textContent=profile.label+' preview · '+previewSize+'px texture · 4K export';
+ const viewQuality=$('qualityOpen');
+ if(viewQuality)viewQuality.textContent='⚙ '+profile.label;
+ const summary=$('qualitySummary');
+ if(summary)summary.textContent=profile.label+' · '+previewSize+'px texture · '+(profile.maxPixels/1e6).toFixed(2)+' MP · '+profile.paintFps+' paint FPS';
+ document.querySelectorAll('.quality-option').forEach(e=>{
+  e.classList.toggle('active',e.dataset.quality===next);
+  e.setAttribute('aria-pressed',String(e.dataset.quality===next));
+ });
+ if($('customQualityPanel'))$('customQualityPanel').hidden=next!=='custom';
  requestView();
 }
 
 
+
+function setQualityDialog(open){
+ const modal=$('qualitySettings');if(!modal)return;
+ modal.hidden=!open;
+ if(open){refreshQualityInputs();$('qualityClose').focus();}
+}
+function refreshQualityInputs(){
+ const c=renderProfiles.custom;
+ const ids={customTexture:c.textureSize,customPixels:c.maxPixels,customPaintFps:c.paintFps,customOrbitFps:c.orbitFps,customDpr:c.maxDpr};
+ for(const [id,val] of Object.entries(ids))if($(id))$(id).value=String(val);
+ $('customTextureOut').textContent=c.textureSize+' px';
+ $('customPixelsOut').textContent=(c.maxPixels/1e6).toFixed(2)+' MP';
+ $('customPaintFpsOut').textContent=c.paintFps+' FPS';
+ $('customOrbitFpsOut').textContent=c.orbitFps+' FPS';
+ $('customDprOut').textContent=c.maxDpr.toFixed(1)+'×';
+}
+function applyCustomQualitySetting(id){
+ const c=renderProfiles.custom;
+ if(id==='customTexture')c.textureSize=Number($(id).value);
+ if(id==='customPixels')c.maxPixels=clamp(Number($(id).value),250000,4000000);
+ if(id==='customPaintFps'){c.paintFps=clamp(Number($(id).value),15,120);c.idleFps=c.paintFps;}
+ if(id==='customOrbitFps')c.orbitFps=clamp(Number($(id).value),15,120);
+ if(id==='customDpr')c.maxDpr=clamp(Number($(id).value),.5,2);
+ refreshQualityInputs();
+ setPreviewQuality('custom');
+ try{localStorage.setItem('SnowyStudio_quality',JSON.stringify(c));}catch(e){}
+}
+function setupQualityControls(){
+ try{
+  const saved=JSON.parse(localStorage.getItem('SnowyStudio_quality')||'null');
+  if(saved&&[512,1024,2048,4096].includes(saved.textureSize)){
+   const c=renderProfiles.custom;
+   c.textureSize=saved.textureSize;c.maxPixels=clamp(Number(saved.maxPixels)||850000,250000,4000000);
+   c.maxDpr=clamp(Number(saved.maxDpr)||1,.5,2);
+   c.paintFps=clamp(Number(saved.paintFps)||30,15,120);
+   c.orbitFps=clamp(Number(saved.orbitFps)||40,15,120);
+   c.idleFps=c.paintFps;
+  }
+ }catch(e){}
+ $('qualityOpen').addEventListener('click',()=>setQualityDialog(true));
+ $('previewQualityBtn').addEventListener('click',()=>setQualityDialog(true));
+ $('qualityClose').addEventListener('click',()=>setQualityDialog(false));
+ $('qualityDone').addEventListener('click',()=>setQualityDialog(false));
+ $('qualitySettings').addEventListener('click',e=>{if(e.target===$('qualitySettings'))setQualityDialog(false);});
+ document.querySelectorAll('.quality-option').forEach(btn=>btn.addEventListener('click',()=>setPreviewQuality(btn.dataset.quality)));
+ for(const id of ['customTexture','customPixels','customPaintFps','customOrbitFps','customDpr'])
+  $(id).addEventListener('input',()=>applyCustomQualitySetting(id));
+ try{
+  const storedMode=localStorage.getItem('SnowyStudio_quality_mode');
+  if(storedMode&&renderProfiles[storedMode])state.quality=storedMode;
+ }catch(e){}
+ refreshQualityInputs();
+ setPreviewQuality(state.quality);
+}
 function message(msg){toast.textContent=msg;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),3300);}
 function status(msg){hint.textContent=msg;}
 const hexRGB=hex=>{let x=parseInt(hex.replace('#',''),16);return[(x>>16)&255,(x>>8)&255,x&255]};
@@ -262,7 +329,7 @@ function frame(time){raf=0;lastDrawTime=time;
   gl.viewport(0,0,dw,dh);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   gl.useProgram(program);gl.uniformMatrix4fv(locations.vp,false,vpMatrix(w/h));gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,decalTex);decalPreviewUniforms();gl.activeTexture(gl.TEXTURE0);
   for(const m of meshes){if(m.kind==='glass')continue;gl.bindVertexArray(m.vao);gl.uniform1f(locations.useTex,m.kind==='skin'?1:0);gl.uniform1f(locations.alpha,1);gl.uniform1f(locations.previewOn,m.kind==='skin'&&state.tool==='decal'&&state.previewHit&&state.previewInside&&!state.orbitActive&&!state.pressed?1:0);let c=m.kind==='cockpit'?[.14,.19,.24]:[.4,.48,.53];gl.uniform3fv(locations.tint,c);gl.drawElements(gl.TRIANGLES,m.idx.length,gl.UNSIGNED_INT,0);}
-  gl.uniform1f(locations.previewOn,0);gl.depthMask(false);for(const m of meshes){if(m.kind!=='glass')continue;gl.bindVertexArray(m.vao);gl.uniform1f(locations.useTex,0);gl.uniform1f(locations.alpha,.35);gl.uniform3fv(locations.tint,[.16,.33,.39]);gl.drawElements(gl.TRIANGLES,m.idx.length,gl.UNSIGNED_INT,0);}gl.depthMask(true);gl.bindVertexArray(null);state.needsRender=false;if(!state.dirtyTex)clearGhostStroke();
+  gl.uniform1f(locations.previewOn,0);gl.depthMask(false);for(const m of meshes){if(m.kind!=='glass')continue;gl.bindVertexArray(m.vao);gl.uniform1f(locations.useTex,0);gl.uniform1f(locations.alpha,.35);gl.uniform3fv(locations.tint,[.16,.33,.39]);gl.drawElements(gl.TRIANGLES,m.idx.length,gl.UNSIGNED_INT,0);}gl.depthMask(true);gl.bindVertexArray(null);state.needsRender=false;if(!state.dirtyTex&&!state.shapeStart)clearGhostStroke();
  }
  if(state.dirtyTex)requestView();
 }
@@ -401,6 +468,65 @@ function dab(hit,radius,params={}){
  paint.restore();
  return 1;
 }
+
+function shapeBounds(a,b,constrain=false){
+ let dx=b.x-a.x,dy=b.y-a.y;
+ if(constrain){
+  const side=Math.max(Math.abs(dx),Math.abs(dy));
+  dx=Math.sign(dx||1)*side;dy=Math.sign(dy||1)*side;
+ }
+ return {x:Math.min(a.x,a.x+dx),y:Math.min(a.y,a.y+dy),width:Math.abs(dx),height:Math.abs(dy),endX:a.x+dx,endY:a.y+dy};
+}
+function markPaintBounds(x0,y0,x1,y1,extra=0){
+ const minX=Math.max(0,Math.floor((Math.min(x0,x1)-extra)/TILE));
+ const maxX=Math.min(GRID-1,Math.floor((Math.max(x0,x1)+extra)/TILE));
+ const minY=Math.max(0,Math.floor((Math.min(y0,y1)-extra)/TILE));
+ const maxY=Math.min(GRID-1,Math.floor((Math.max(y0,y1)+extra)/TILE));
+ for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++)markTile(y*GRID+x);
+}
+function markShapeSegment(x0,y0,x1,y1,radius){
+ const n=Math.max(1,Math.ceil(Math.hypot(x1-x0,y1-y0)/128));
+ for(let i=0;i<=n;i++){
+  const t=i/n;
+  markPaintRect(x0+(x1-x0)*t,y0+(y1-y0)*t,radius);
+ }
+}
+function markShapeOutline(box,tool,strokeWidth,start,end){
+ const r=strokeWidth/2+3;
+ if(tool==='line'){markShapeSegment(start.x,start.y,end.x,end.y,r);return;}
+ if(tool==='rectangle'||tool==='square'){
+  const x=box.x,y=box.y,X=box.x+box.width,Y=box.y+box.height;
+  markShapeSegment(x,y,X,y,r);markShapeSegment(X,y,X,Y,r);
+  markShapeSegment(X,Y,x,Y,r);markShapeSegment(x,Y,x,y,r);return;
+ }
+ const steps=Math.min(256,Math.max(24,Math.ceil((box.width+box.height)/55)));
+ const cx=box.x+box.width/2,cy=box.y+box.height/2,rx=box.width/2,ry=box.height/2;
+ for(let i=0;i<steps;i++){
+  const a=i*TAU/steps;
+  markPaintRect(cx+Math.cos(a)*rx,cy+Math.sin(a)*ry,r);
+ }
+}
+function paintShape(startHit,endHit,constrain=false){
+ if(!startHit||!endHit||!shapeTools.has(state.tool))return false;
+ const start=uvDabGeometry(startHit,state.size),end=uvDabGeometry(endHit,state.size);
+ const strokeWidth=Math.max(1,start.radius*1.9);
+ const box=shapeBounds(start,end,(constrain||state.tool==='square'||state.tool==='circle')&&state.tool!=='line');
+ if(state.shapeFilled&&state.tool!=='line')
+  markPaintBounds(box.x,box.y,box.x+box.width,box.y+box.height,strokeWidth*.5+2);
+ else markShapeOutline(box,state.tool,strokeWidth,start,end);
+ paint.save();
+ paint.globalAlpha=state.opacity*state.colorAlpha;
+ paint.globalCompositeOperation='source-over';paint.strokeStyle=state.color;
+ paint.fillStyle=state.color;paint.lineWidth=strokeWidth;paint.lineCap='round';paint.lineJoin='round';
+ paint.beginPath();
+ if(state.tool==='line'){paint.moveTo(start.x,start.y);paint.lineTo(end.x,end.y);}
+ if(state.tool==='rectangle'||state.tool==='square')paint.rect(box.x,box.y,Math.max(.1,box.width),Math.max(.1,box.height));
+ if(state.tool==='ellipse'||state.tool==='circle')paint.ellipse(box.x+box.width/2,box.y+box.height/2,Math.max(.1,box.width/2),Math.max(.1,box.height/2),0,0,TAU);
+ if(state.shapeFilled&&state.tool!=='line')paint.fill();
+ else paint.stroke();
+ paint.restore();
+ return true;
+}
 function stampDecal(hit){if(!hit||!state.image)return;const size=state.decalSize,halfDiag=size*.85;let count=0;
  for(const tri of sphereQuery(hit.point,halfDiag+.03)){const m=projectTriangle(tri,hit,halfDiag,'decal');if(!m)continue;markUV(m,size*Math.max(1,(state.image.naturalHeight||state.image.height)/(state.image.naturalWidth||state.image.width))*1.3);paint.save();clipUV(paint,m.uv);paint.setTransform(...m.mat);paint.globalAlpha=state.decalOpacity*(state.decalTint?state.colorAlpha:1);
  paint.rotate(state.decalRotate*Math.PI/180);let ih=state.image.naturalHeight||state.image.height,iw=state.image.naturalWidth||state.image.width,ratio=ih/iw;
@@ -503,12 +629,14 @@ function setupColorEditor(){
  $('copyColorHex').addEventListener('click',()=>{if(navigator.clipboard?.writeText)navigator.clipboard.writeText(state.color.toUpperCase()).then(()=>message('Color copied'));else message(state.color.toUpperCase());});
  refreshPicker();
 }
-const styleTitles={brush:['Solid brush','Draw smooth, continuous lines.'],spray:['Spray paint','Scattered dots for fades and weathering.'],mountain:['Alpine peaks','Place spaced mountain ranges with snowcaps.'],decal:['Decal preview','Hover to inspect the decal before clicking to apply.'],erase:['Eraser','Remove artwork without erasing original detail.'],orbit:['Camera navigation','Drag to rotate the aircraft. No paint applied.']};
+const styleTitles={brush:['Solid brush','Draw smooth, continuous lines.'],spray:['Spray paint','Scattered dots for fades and weathering.'],mountain:['Alpine peaks','Place spaced mountain ranges with snowcaps.'],decal:['Decal preview','Hover to inspect the decal before clicking to apply.'],erase:['Eraser','Remove artwork without erasing original detail.'],line:['Straight line','Drag for a clean straight stroke.'],rectangle:['Rectangle','Drag a box. Hold Shift to make a square.'],ellipse:['Ellipse','Drag an oval. Hold Shift to make a circle.'],square:['Square','Drag to draw a perfect square.'],circle:['Circle','Drag to draw a perfect circle.'],orbit:['Camera navigation','Drag to rotate the aircraft. No paint applied.']};
 // The selected sidebar page and the active painting tool are one coordinated UI state.
-const paintTools=new Set(['brush','spray','mountain','erase']);
+const paintTools=new Set(['brush','spray','mountain','erase','line','rectangle','ellipse','square','circle']);
+const shapeTools=new Set(['line','rectangle','ellipse','square','circle']);
 const validPanes=new Set(['paint','decals','camo','layers']);
 function setPane(name){
  if(!validPanes.has(name))return;
+ if(name!==state.pane){clearGhostStroke();state.previewHit=null;}
  state.pane=name;
  for(const e of document.querySelectorAll('.panel.left > .section[data-pane]')){
   const active=e.dataset.pane===name;
@@ -553,6 +681,15 @@ function drawToolPreview(){
    g.lineTo(x+66,h*.51-height*.53);
    g.lineTo(x+83,h*.75);g.stroke();
   }
+ }else if(shapeTools.has(state.tool)){
+  g.lineWidth=5;
+  g.beginPath();
+  if(state.tool==='line'){g.moveTo(27,h-19);g.lineTo(w-22,19);}
+  if(state.tool==='rectangle')g.rect(35,18,w-70,h-36);
+  if(state.tool==='square')g.rect(w/2-31,h/2-31,62,62);
+  if(state.tool==='ellipse')g.ellipse(w/2,h/2,(w-70)/2,(h-36)/2,0,0,TAU);
+  if(state.tool==='circle')g.ellipse(w/2,h/2,31,31,0,0,TAU);
+  if(state.shapeFilled&&state.tool!=='line')g.fill();else g.stroke();
  }else{
   g.lineWidth=state.tool==='erase'?19:16;
   if(state.tool==='erase')g.setLineDash([9,6]);
@@ -567,8 +704,13 @@ function updateToolControls(){
  const t=state.tool;
  for(const e of document.querySelectorAll('[data-tool-config]'))
   e.hidden=!e.dataset.toolConfig.split(' ').includes(t);
- const titles={brush:'Solid brush',spray:'Spray paint',mountain:'Alpine peaks',erase:'Eraser',orbit:'Orbit camera',decal:'Image decal'};
- const desc={brush:'Continuous, clean lines',spray:'Scattered particles; adjust density and spread',mountain:'Separated peaks; adjust height and spacing',erase:'Remove only your painted artwork',orbit:'Rotate the aircraft without painting',decal:'Preview, then click to place images'};
+ for(const e of document.querySelectorAll('[data-paint-tool]')){
+  const active=e.dataset.paintTool===t;
+  e.classList.toggle('active',active);
+  e.setAttribute('aria-pressed',String(active));
+ }
+ const titles={brush:'Solid brush',spray:'Spray paint',mountain:'Alpine peaks',erase:'Eraser',line:'Straight line',rectangle:'Rectangle',ellipse:'Ellipse',square:'Square',circle:'Circle',orbit:'Orbit camera',decal:'Image decal'};
+ const desc={brush:'Continuous, clean lines',spray:'Scattered particles; adjust density and spread',mountain:'Separated peaks; adjust height and spacing',erase:'Remove only your painted artwork',line:'Click and drag a straight line',rectangle:'Draw a rectangle · Shift locks to square',ellipse:'Draw an oval · Shift locks to circle',square:'Drag to create a square',circle:'Drag to create a circle',orbit:'Rotate the aircraft without painting',decal:'Preview, then click to place images'};
  if($('activeToolName'))$('activeToolName').textContent=titles[t]||t;
  if($('activeToolHelp'))$('activeToolHelp').textContent=desc[t]||'';
  drawToolPreview();
@@ -577,7 +719,7 @@ function setTool(t,requestedPane=null){
  if(!styleTitles[t])return;
  state.tool=t;
  if(paintTools.has(t))state.lastPaintTool=t;
- const pane=requestedPane||(t==='decal'?'decals':paintTools.has(t)?'paint':state.pane);
+ const pane=requestedPane||(t==='decal'?'decals':paintTools.has(t)?'paint':(state.pane==='decals'?'paint':state.pane));
  for(const e of document.querySelectorAll('.rail-button[data-tool]')){
   const active=e.dataset.tool===t;
   e.classList.toggle('active',active);
@@ -676,8 +818,26 @@ function fitStrokeOverlay(){
   strokeOverlay.width=w;strokeOverlay.height=h;overlayLast=null;
  }
 }
+
+function ghostShape(p,shift=false){
+ if(!strokeOverlayCtx||!state.shapeStart)return;
+ fitStrokeOverlay();
+ const c=strokeOverlayCtx;
+ const a=state.shapeStart.screen;
+ c.clearRect(0,0,strokeOverlay.width,strokeOverlay.height);
+ const box=shapeBounds({x:a[0],y:a[1]},{x:p[0],y:p[1]},(shift||state.tool==='square'||state.tool==='circle')&&state.tool!=='line');
+ const width=clamp(state.size*wrap.clientHeight/(Math.tan(Math.PI/6)*orbit.dist),1.5,70);
+ c.save();c.strokeStyle=state.color;c.fillStyle=state.color;c.lineWidth=width;
+ c.globalAlpha=.82*state.opacity*state.colorAlpha;
+ c.lineCap='round';c.lineJoin='round';c.beginPath();
+ if(state.tool==='line'){c.moveTo(a[0],a[1]);c.lineTo(p[0],p[1]);}
+ if(state.tool==='rectangle'||state.tool==='square')c.rect(box.x,box.y,Math.max(.1,box.width),Math.max(.1,box.height));
+ if(state.tool==='ellipse'||state.tool==='circle')c.ellipse(box.x+box.width/2,box.y+box.height/2,Math.max(.1,box.width/2),Math.max(.1,box.height/2),0,0,TAU);
+ if(state.shapeFilled&&state.tool!=='line')c.fill();else c.stroke();
+ c.restore();
+}
 function ghostStroke(p,start=false){
- if(!strokeOverlayCtx||state.tool==='decal'||state.tool==='orbit')return;
+ if(!strokeOverlayCtx||state.tool==='decal'||state.tool==='orbit'||shapeTools.has(state.tool))return;
  fitStrokeOverlay();
  const c=strokeOverlayCtx,scale=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);
  const width=clamp(state.size*scale*2,2,90);
@@ -697,11 +857,17 @@ function pos(ev){let r=view.getBoundingClientRect();return [ev.clientX-r.left,ev
 function stampAt(posn){let hit=cast(...posn);if(!hit){status('Outside paintable skin');return null;}if(state.tool==='decal')stampDecal(hit);else dab(hit,state.size,{}) ;status(`${hit.uv[0].toFixed(3)}, ${hit.uv[1].toFixed(3)} UV · ${state.tool.toUpperCase()}`);return hit;}
 function beginStroke(ev){if(ev.button===2||ev.altKey||ev.shiftKey&&ev.button===1||state.tool==='orbit'||ev.buttons===4||ev.buttons===2){state.orbitActive=true;state.panActive=ev.buttons===4;view.setPointerCapture(ev.pointerId);state.move=pos(ev);view.style.cursor='grabbing';return;}
  if(ev.button!==0||!state.baseLoaded)return;const p=pos(ev),hit=cast(...p);if(!hit){message('Click on the painted fuselage or wings, not empty space.');return;}
- clearGhostStroke();beginHistory('paint');view.setPointerCapture(ev.pointerId);state.pressed=true;state.strokeTravel=0;state.move=p;state.lastStamp=p;state.brushActive=true;stampAt(p);ghostStroke(p,true);requestView();}
+ clearGhostStroke();beginHistory('paint');view.setPointerCapture(ev.pointerId);
+ state.pressed=true;state.strokeTravel=0;state.move=p;state.lastStamp=p;state.brushActive=true;
+ if(shapeTools.has(state.tool)){
+  state.shapeStart={screen:p,hit};state.shapeCurrent=p;
+  ghostShape(p,ev.shiftKey);requestView();return;
+ }
+ stampAt(p);ghostStroke(p,true);requestView();}
 function flushStrokePoint(){
  if(!pendingStrokePoint||!state.brushActive||!state.move)return;
  const p=pendingStrokePoint;pendingStrokePoint=null;
- if(state.tool==='decal')return;
+ if(state.tool==='decal'||shapeTools.has(state.tool))return;
  const old=state.move,dx=p[0]-old[0],dy=p[1]-old[1],distance=Math.hypot(dx,dy);
  if(distance<.001)return;
  const pxUnit=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);
@@ -725,12 +891,30 @@ function moveStroke(ev){const p=pos(ev);state.mouse=p;const circle=$('cursorPrev
  const pxRadius=state.tool==='decal'?state.decalSize:state.size;const scale=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);const d=clamp(pxRadius*scale*2,6,260);circle.style.width=d+'px';circle.style.height=d+'px';
  if(state.orbitActive&&state.move){const dx=p[0]-state.move[0],dy=p[1]-state.move[1];if(state.panActive){cameraBasis();orbit.target=add(orbit.target,add(mul(orbit.right,-dx*orbit.dist*.0014),mul(orbit.up,dy*orbit.dist*.0014)));}else{orbit.yaw-=dx*.008;orbit.pitch=clamp(orbit.pitch+dy*.008,-1.55,1.55);}state.move=p;document.querySelectorAll('.camera-btn').forEach(b=>b.classList.remove('active'));requestView();return;}
  if(state.brushActive&&state.move){
+  if(state.shapeStart){state.shapeCurrent=p;ghostShape(p,ev.shiftKey);return;}
   if(state.tool!=='decal'){ghostStroke(p);pendingStrokePoint=p;requestView();}
   return;
  }
  if(state.baseLoaded&&!state.pressed){const now=performance.now();if(now-lastStatusTime<70){if(state.tool==='decal')requestView();return;}lastStatusTime=now;let hit=cast(...p);if(hit)status('UV '+hit.uv.map(n=>n.toFixed(3)).join(' / ')+(state.tool==='decal'?' · DECAL PREVIEW · click to place':' · ready'));if(state.tool==='decal')requestView();}
 }
-function endStroke(ev){if(state.orbitActive){state.orbitActive=false;view.style.cursor=state.tool==='orbit'?'grab':'crosshair';}if(state.brushActive){if(ev&&ev.type==='pointerup')pendingStrokePoint=pos(ev);flushStrokePoint();state.brushActive=false;state.pressed=false;finishHistory();requestView();}state.move=null;}
+function endStroke(ev){
+ if(state.orbitActive){state.orbitActive=false;view.style.cursor=state.tool==='orbit'?'grab':'crosshair';}
+ if(state.brushActive){
+  if(state.shapeStart){
+   if(ev&&ev.type==='pointerup'){
+    const end=cast(...pos(ev));
+    if(end)paintShape(state.shapeStart.hit,end,ev.shiftKey);
+   }
+   state.shapeStart=null;state.shapeCurrent=null;clearGhostStroke();
+  }else{
+   if(ev&&ev.type==='pointerup')pendingStrokePoint=pos(ev);
+   flushStrokePoint();
+  }
+  pendingStrokePoint=null;state.brushActive=false;state.pressed=false;
+  finishHistory();requestView();
+ }
+ state.move=null;
+}
 function buildStamp(kind){const c=document.createElement('canvas');c.width=c.height=512;const ctx=c.getContext('2d');ctx.strokeStyle='#071721';ctx.fillStyle='#071721';ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=12;
  const L=(a)=>{ctx.beginPath();a.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.stroke();};
  if(kind==='alpine'){L([[30,388],[130,235],[190,305],[255,101],[315,283],[370,210],[486,381]]);L([[113,259],[147,276],[170,249]]);L([[230,150],[258,182],[279,161]]);L([[365,229],[389,249]]);L([[55,411],[170,411],[245,390],[355,411],[465,412]]);}
@@ -841,17 +1025,14 @@ function setupUI(){setupSwatches();setupColorEditor();setupStamps();
  const drawer=$('uvDrawer');const toggleUV=(open)=>{drawer.classList.toggle('is-open',open);if(open){state.needMini=true;requestView();}$('uvToggle').setAttribute('aria-expanded',String(open));};
  $('uvToggle').addEventListener('click',()=>toggleUV(!drawer.classList.contains('is-open')));
  $('uvClose').addEventListener('click',()=>toggleUV(false));
- const qualityButton=$('previewQualityBtn');
- if(qualityButton)qualityButton.addEventListener('click',()=>{
-  const modes=['fast','balanced','detail'];
-  setPreviewQuality(modes[(modes.indexOf(state.quality)+1)%modes.length]);
- });
- setPreviewQuality(state.quality);
+ setupQualityControls();
  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.needsRender)scheduleFrame();});
   $('zoomIn').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*.78,4.5,60);requestView();});
  $('zoomOut').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*1.28,4.5,60);requestView();});
  $('fitView').addEventListener('click',()=>setCamera('iso'));
  for(const b of document.querySelectorAll('.rail-button[data-tool]'))b.addEventListener('click',()=>setTool(b.dataset.tool));
+ for(const b of document.querySelectorAll('[data-paint-tool]'))b.addEventListener('click',()=>setTool(b.dataset.paintTool));
+ $('shapeFilled').addEventListener('change',e=>{state.shapeFilled=e.target.checked;drawToolPreview();});
  for(const b of document.querySelectorAll('.segbtn'))b.addEventListener('click',()=>{state.style=b.dataset.style;drawToolPreview();document.querySelectorAll('.segbtn').forEach(x=>x.classList.toggle('active',x===b));});
  function bindRange(id,prop,outid,render){let input=$(id),output=$(outid);input.addEventListener('input',()=>{state[prop]=+input.value*(prop==='opacity'||prop==='hardness'||prop==='camoStrength'?.01:1);output.textContent=prop==='size'||prop==='decalSize'?state[prop].toFixed(2)+' m':prop==='decalRotate'?state[prop]+'°':prop==='sprayDensity'?Math.round(state[prop])+' dots':prop==='spraySpread'||prop==='peakHeight'||prop==='peakSpacing'?state[prop].toFixed(2)+'×':Math.round(state[prop]*100)+'%';if(render)render();if(state.tool==='decal')requestView();drawToolPreview();$('brushHUD').textContent=(state.tool==='decal'?'DECAL · '+state.decalSize.toFixed(2):state.tool.toUpperCase()+' · '+state.size.toFixed(2))+' m';});}
  bindRange('sprayDensity','sprayDensity','sprayDensityOut');
@@ -898,7 +1079,7 @@ function setupUI(){setupSwatches();setupColorEditor();setupStamps();
  view.addEventListener('pointerdown',beginStroke);view.addEventListener('pointermove',moveStroke);view.addEventListener('pointerup',endStroke);view.addEventListener('pointercancel',endStroke);view.addEventListener('contextmenu',e=>e.preventDefault());view.addEventListener('pointerleave',()=>{$('cursorPreview').style.display='none';state.previewInside=false;state.previewHit=null;requestView();});
  view.addEventListener('wheel',e=>{e.preventDefault();orbit.dist=clamp(orbit.dist*Math.exp(e.deltaY*.001),4.5,60);requestView();},{passive:false});
  wrap.addEventListener('dragover',e=>{e.preventDefault();});wrap.addEventListener('drop',e=>{e.preventDefault();const f=e.dataTransfer?.files?.[0];if(f&&f.type.startsWith('image/'))loadImageFile(f,img=>{setDecalImage(img,f.name);document.querySelectorAll('.stamp').forEach(x=>x.classList.remove('active'));setTool('decal');message('Image loaded. Hover over the aircraft to preview.');});});
- window.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('colorEditor').hidden){toggleColorEditor(false);e.preventDefault();return;}if($('helpModal').classList.contains('show')){$('helpModal').classList.remove('show');}else if(state.tool==='decal'){setTool('orbit');message('Decal preview cancelled — no artwork placed.');}e.preventDefault();return;}if(e.target.matches('input,textarea,select'))return;let key=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&key==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();return;}if((e.ctrlKey||e.metaKey)&&key==='y'){e.preventDefault();redo();return;}if(key==='b')setTool('brush');if(key==='d')setTool('decal');if(key==='e')setTool('erase');if(key==='o')setTool('orbit');});
+ window.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('qualitySettings').hidden){setQualityDialog(false);e.preventDefault();return;}if(!$('colorEditor').hidden){toggleColorEditor(false);e.preventDefault();return;}if($('helpModal').classList.contains('show')){$('helpModal').classList.remove('show');}else if(state.tool==='decal'){setTool('orbit');message('Decal preview cancelled — no artwork placed.');}e.preventDefault();return;}if(!$('qualitySettings').hidden||!$('colorEditor').hidden)return;if(e.target.matches('input,textarea,select'))return;let key=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&key==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();return;}if((e.ctrlKey||e.metaKey)&&key==='y'){e.preventDefault();redo();return;}if(key==='b')setTool('brush');if(key==='l')setTool('line');if(key==='r')setTool('rectangle');if(key==='u')setTool('ellipse');if(key==='d')setTool('decal');if(key==='e')setTool('erase');if(key==='o')setTool('orbit');});
  window.addEventListener('resize',()=>{fitStrokeOverlay();requestView();});
 }
 try{status('Loading F-16 geometry…');initGL();initMesh();setupUI();requestView();loadBase().then(()=>{state.loaded=true;status('F-16 READY · 68k textured triangles');message('F-16 loaded. Paint directly on the aircraft!');}).catch(e=>{console.error(e);status('Could not load base image: '+e.message);message('Texture missing — keep assets folder next to index.html');});}catch(e){console.error('SnowyStudio boot',e);status('Startup error: '+e.message);alert('SnowyStudio failed to start: '+e.message);}

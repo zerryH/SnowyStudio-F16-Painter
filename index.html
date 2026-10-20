@@ -138,6 +138,32 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
 .normal-file{font-size:10.5px;color:#95c0ce;line-height:1.6;margin-top:9px}
 @media(max-width:1320px){#exportPngBtn,#exportTgaBtn{display:none!important}}
 @media(max-width:560px){.color-editor-dialog{padding:15px}.color-grid{grid-template-columns:1fr}.rgba-controls{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}}
+
+/* Editor navigation: only one tab panel is visible, including when hidden attribute is used */
+.panel.left>.section[hidden],.panel.left>.section:not(.pane-active){display:none!important}
+.panel.left>.section.pane-active:not([hidden]){display:block!important}
+.paint-tool-header{margin:2px 0 10px}.paint-tool-header .section-title{margin-bottom:4px}
+.paint-tool-header p{color:#91b2c5;font-size:10.5px;line-height:1.55;margin:0}
+.paint-tool-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin:12px 0 19px}
+.paint-tool-choice{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:65px;padding:7px 2px;background:#172a3b;border:1px solid #33556a;border-radius:10px;color:#bfd8e6}
+.paint-tool-choice .tool-glyph{font-size:22px;font-weight:400;line-height:1.2}.paint-tool-choice strong{font-size:10px;line-height:1.1}
+.paint-tool-choice:hover{background:#29485b;border-color:#5c8fa6}
+.paint-tool-choice.active{background:linear-gradient(145deg,#195463,#183645);border-color:#75d3e4;color:#e6ffff;box-shadow:0 0 0 1px #4fd1db55 inset}
+.quality-scrim[hidden],.quality-custom[hidden]{display:none!important}
+.quality-scrim{position:fixed;inset:0;z-index:205;background:#030b15c9;backdrop-filter:blur(8px);display:grid;place-items:center;padding:15px}
+.quality-dialog{width:min(540px,97vw);max-height:95vh;overflow:auto;padding:23px;border:1px solid #487186;background:linear-gradient(145deg,#1b3444,#101e2d);border-radius:18px;box-shadow:0 24px 80px #000a}
+.quality-head{display:flex;align-items:start;justify-content:space-between;gap:20px}.quality-head h2{font-size:22px}
+.quality-head p{margin:5px 0 14px}
+.quality-presets{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+.quality-option{padding:11px 6px;border:1px solid #3a5b71;border-radius:9px;background:#152839;color:#b6d0dd;font-weight:800;font-size:12px}
+.quality-option.active{background:#20576a;border-color:#79d6e5;color:#ecffff}
+.quality-custom{margin:16px 0;padding:16px;background:#132739;border:1px solid #315568;border-radius:11px}
+.quality-custom .field{margin:12px 0 8px}.quality-custom select{width:100%;padding:11px;border:1px solid #3c677a;background:#182e3f;color:#e4f6ff;border-radius:8px}
+.quality-custom input[type=range]{width:100%;accent-color:#6ed5e1}
+.quality-foot{display:flex;align-items:center;justify-content:space-between;gap:15px;border-top:1px solid #355365;margin-top:18px;padding-top:14px;font-size:11px;color:#a8c8d6}
+.quality-camera-btn{border-color:#64a9be;color:#c4f5ff}
+@media(max-width:1250px){.paint-tool-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:800px){.topbar #previewQualityBtn{display:none!important}.quality-camera-btn{display:inline-flex!important}}
 </style></head>
 <body>
 <div id="colorEditor" class="color-editor-scrim" hidden>
@@ -154,6 +180,26 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
    </div>
   </div>
   <div class="color-editor-footer"><span class="small-muted">HEX • RGB • HSV • opacity</span><button id="colorEditorDone" class="btn primary" type="button">Use this color ✓</button></div>
+ </section>
+</div>
+<div id="qualitySettings" class="quality-scrim" hidden>
+ <section class="quality-dialog" role="dialog" aria-modal="true" aria-labelledby="qualityTitle">
+  <div class="quality-head"><div><div class="eyebrow">RENDER ENGINE</div><h2 id="qualityTitle">Preview quality</h2><p class="small-muted">Adjust viewport performance. The exported texture always stays 4096 × 4096.</p></div><button id="qualityClose" type="button" class="color-x" aria-label="Close quality settings">×</button></div>
+  <div class="quality-presets" role="group" aria-label="Quality presets">
+   <button class="quality-option active" data-quality="fast" type="button">Fast</button>
+   <button class="quality-option" data-quality="balanced" type="button">Balanced</button>
+   <button class="quality-option" data-quality="detail" type="button">Detail</button>
+   <button class="quality-option" data-quality="custom" type="button">Custom</button>
+  </div>
+  <div id="customQualityPanel" class="quality-custom" hidden>
+   <div class="field"><label for="customTexture">3D preview texture</label><output id="customTextureOut">1024 px</output></div>
+   <select id="customTexture"><option value="512">512 — Lowest GPU usage</option><option value="1024" selected>1024</option><option value="2048">2048</option><option value="4096">4096 — Finest details</option></select>
+   <div class="field"><label for="customPixels">Viewport pixel budget</label><output id="customPixelsOut">0.85 MP</output></div><input id="customPixels" type="range" min="250000" max="4000000" step="50000" value="850000">
+   <div class="field"><label for="customPaintFps">Painting refresh cap</label><output id="customPaintFpsOut">30 FPS</output></div><input id="customPaintFps" type="range" min="15" max="120" step="5" value="30">
+   <div class="field"><label for="customOrbitFps">Camera refresh cap</label><output id="customOrbitFpsOut">40 FPS</output></div><input id="customOrbitFps" type="range" min="15" max="120" step="5" value="40">
+   <div class="field"><label for="customDpr">Maximum pixel ratio</label><output id="customDprOut">1.0×</output></div><input id="customDpr" type="range" min="0.5" max="2" step="0.1" value="1">
+  </div>
+  <div class="quality-foot"><span id="qualitySummary">Fast mode · 1024px preview</span><button id="qualityDone" type="button" class="btn primary">Apply & close</button></div>
  </section>
 </div>
 <div class="app">
@@ -177,6 +223,18 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
  <div class="panel-heading"><div class="eyebrow">Creative workspace</div><h2 id="toolHeading">Paintbrush</h2><div class="small-muted" id="toolSubtitle">Draw directly on the aircraft in 3D.</div></div>
  <div class="sidebar-tabs" role="tablist" aria-label="Editor controls"><button class="sidebar-tab active" role="tab" aria-controls="paintPane" data-pane-target="paint">Paint</button><button class="sidebar-tab" role="tab" aria-controls="decalsPane" data-pane-target="decals">Decals</button><button class="sidebar-tab" role="tab" aria-controls="camoPane" data-pane-target="camo">Camo</button><button class="sidebar-tab" role="tab" aria-controls="layersPane" data-pane-target="layers">Layers</button></div>
  <div id="paintPane" role="tabpanel" class="section pane-active" data-pane="paint">
+ <div class="paint-tool-header"><div class="section-title">Choose a tool <span class="subtle">Select to paint</span></div><p>Brushes and shapes stay here. Decals, camouflage and layers have their own tabs.</p></div>
+ <div class="paint-tool-grid" role="group" aria-label="Brushes and drawing shapes">
+  <button type="button" class="paint-tool-choice active" data-paint-tool="brush"><span class="tool-glyph">✎</span><strong>Brush</strong></button>
+  <button type="button" class="paint-tool-choice" data-paint-tool="spray"><span class="tool-glyph">⁘</span><strong>Spray</strong></button>
+  <button type="button" class="paint-tool-choice" data-paint-tool="mountain"><span class="tool-glyph">⌁</span><strong>Peak</strong></button>
+  <button type="button" class="paint-tool-choice" data-paint-tool="erase"><span class="tool-glyph">⌫</span><strong>Eraser</strong></button>
+  <button type="button" class="paint-tool-choice" data-paint-tool="line"><span class="tool-glyph">╱</span><strong>Line</strong></button>
+  <button type="button" class="paint-tool-choice" data-paint-tool="rectangle"><span class="tool-glyph">▭</span><strong>Rectangle</strong></button>
+  <button type="button" class="paint-tool-choice" data-paint-tool="ellipse"><span class="tool-glyph">◯</span><strong>Ellipse</strong></button>
+  <button type="button" class="paint-tool-choice" data-paint-tool="square"><span class="tool-glyph">□</span><strong>Square</strong></button>
+  <button type="button" class="paint-tool-choice" data-paint-tool="circle"><span class="tool-glyph">○</span><strong>Circle</strong></button>
+ </div>
  <div class="current-mode"><div class="mode-eyebrow">ACTIVE TOOL</div><strong id="activeToolName">Solid brush</strong><p id="activeToolHelp">Continuous, clean lines</p><canvas id="toolPreview" width="280" height="92" aria-label="Brush stroke preview"></canvas></div>
  <div class="tool-config" data-tool-config="brush"><div class="section-title">Brush tip style</div><div class="segment" id="brushType"><button class="segbtn active" data-style="round">Solid</button><button class="segbtn" data-style="soft">Soft</button><button class="segbtn" data-style="chalk">Rough ink</button></div></div>
  <div class="stack-gap"><div class="field"><label for="brushSize">Brush size</label><output id="sizeOut">0.24 m</output></div><input class="range" id="brushSize" type="range" min="0.03" max="1.8" step="0.01" value="0.24"></div>
@@ -194,7 +252,12 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
   <div class="field"><label for="peakSpacing">Peak spacing</label><output id="peakSpacingOut">1.50×</output></div><input class="range" id="peakSpacing" type="range" min=".75" max="3" value="1.5" step=".05">
   <div class="tool-hint">Drag to stamp separate hand-drawn mountain groups. Increase spacing for isolated peaks.</div>
  </div>
- <div class="section-title">Paint color</div><div class="color-row"><input id="colorPick" class="colorpick" type="color" value="#101820"><span class="colorcode" id="colorCode">#101820</span><span class="small-muted">Solid RGB</span></div>
+ <div class="tool-config" data-tool-config="rectangle ellipse square circle" hidden>
+ <div class="section-title">Shape options</div>
+ <div class="field"><label for="shapeFilled">Filled shape</label><input class="check" id="shapeFilled" type="checkbox"></div>
+ <p class="small-muted">Drag on the aircraft to draw. Hold Shift for a perfect circle or square.</p>
+ </div>
+ <div data-tool-config="line" hidden class="tool-hint">Drag between two points on the aircraft to draw a straight line. The current brush size controls its thickness.</div><div class="section-title">Paint color</div><div class="color-row"><input id="colorPick" class="colorpick" type="color" value="#101820"><span class="colorcode" id="colorCode">#101820</span><span class="small-muted">Solid RGB</span></div>
  <button class="btn color-editor-open" data-color-open="paint" type="button">↗ Advanced RGB / HEX / Alpha</button><div class="swatches" id="swatches"></div></div>
  <div id="decalsPane" role="tabpanel" class="section" data-pane="decals"><div class="section-title">Custom graphics <span class="subtle">Live decal preview</span></div><div class="stamps" id="stampGrid"></div><div style="height:11px"></div><label class="upload-zone" for="decalInput"><strong>＋ Upload PNG / image</strong><small>Transparent PNG works best · Paste directly onto the 3D model</small></label><input id="decalInput" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" class="hidden">
  <div class="selected-decal"><div class="selected-decal-label">Selected decal <span class="preview-tag">LIVE PREVIEW</span></div><div class="decal-selected-row"><div class="decal-art-bg"><img id="selectedDecalArt" alt="Selected decal preview"></div><div class="decal-selected-text"><strong id="selectedDecalName">Alpine peaks</strong><span>Move over the aircraft to see the decal before you commit.</span><small>Left-click to apply · Right-drag to orbit · Esc to cancel</small></div></div></div>
@@ -226,7 +289,7 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
  <button id="clearNormalBtn" class="btn ghost" type="button" hidden>Remove imported normal map</button>
  </div></div>
 </aside>
-<main class="viewport" id="viewWrap"><canvas id="view3d" aria-label="Interactive F-16 3D model painter"></canvas><canvas id="strokeOverlay" aria-hidden="true"></canvas><div id="cursorPreview"></div><div class="viewtop"><span class="view-chip accent">● FAST 4K UV PAINT</span><span class="view-chip" id="brushHUD">SOLID · 0.24 m</span></div><div class="viewbar" id="cameraBar"><button class="camera-btn active" data-camera="iso">3D</button><button class="camera-btn" data-camera="top">Top</button><button class="camera-btn" data-camera="right">Right</button><button class="camera-btn" data-camera="left">Left</button><button class="camera-btn" data-camera="bottom">Bottom</button><button class="camera-btn" data-camera="front">Nose</button><span class="view-tools-divider"></span><button class="camera-btn" id="zoomOut" title="Zoom out">−</button><button class="camera-btn" id="zoomIn" title="Zoom in">＋</button><button class="camera-btn" id="fitView" title="Reset camera">Fit</button></div>
+<main class="viewport" id="viewWrap"><canvas id="view3d" aria-label="Interactive F-16 3D model painter"></canvas><canvas id="strokeOverlay" aria-hidden="true"></canvas><div id="cursorPreview"></div><div class="viewtop"><span class="view-chip accent">● FAST 4K UV PAINT</span><span class="view-chip" id="brushHUD">SOLID · 0.24 m</span></div><div class="viewbar" id="cameraBar"><button class="camera-btn active" data-camera="iso">3D</button><button class="camera-btn" data-camera="top">Top</button><button class="camera-btn" data-camera="right">Right</button><button class="camera-btn" data-camera="left">Left</button><button class="camera-btn" data-camera="bottom">Bottom</button><button class="camera-btn" data-camera="front">Nose</button><span class="view-tools-divider"></span><button class="camera-btn" id="zoomOut" title="Zoom out">−</button><button class="camera-btn" id="zoomIn" title="Zoom in">＋</button><button class="camera-btn" id="fitView" title="Reset camera">Fit</button><button class="camera-btn quality-camera-btn" id="qualityOpen" type="button" title="Quality and rendering settings">⚙ Quality</button></div>
 <div class="v-bottom"><div class="assist"><strong>Decals:</strong> hover to preview, click to place &nbsp;·&nbsp; <strong>Right drag</strong> rotate &nbsp;·&nbsp; <strong>Scroll</strong> zoom<br><strong>Alt + drag</strong> orbit &nbsp;·&nbsp; <strong>Ctrl + Z</strong> undo &nbsp;·&nbsp; <strong>B / D / E / O</strong> tools</div><div class="view-chip" id="perfModeText" style="font-size:10px">Fast preview · 1024px texture · 4K export</div><div class="viewstat" id="status">Preparing F-16 geometry…</div></div></main>
 <aside class="panel right" id="uvDrawer"><div class="uv-drawer-head"><strong>UV texture & reference</strong><button id="uvClose" aria-label="Close UV panel">×</button></div><div class="panel-heading"><div class="eyebrow">UV output</div><h2>Texture atlas</h2><div class="small-muted">Live paint on the original 4K game texture.</div></div>
 <div class="section"><div class="section-title">UV preview <span class="pill">4K</span></div><div class="mini-wrap"><canvas id="atlasPreview" width="440" height="440"></canvas></div><div class="ruler"><span>0</span><span>4096 × 4096</span><span>1</span></div><button class="btn" id="atlasBtn" style="width:100%;margin-top:13px">Download 4K atlas ↓</button><div class="stack-gap"><button class="btn" id="exportNormalBtn" type="button" style="width:100%" disabled>↓ Export imported _n.tga</button></div></div>
@@ -277,5 +340,5 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
 <script src="assets/texture-part-21.js"></script>
 <script src="assets/texture-part-22.js"></script>
 <script src="assets/texture-part-23.js"></script>
-<script src="assets/texture-final.js"></script><script src="app.js?v=color-lab-20261020"></script>
+<script src="assets/texture-final.js"></script><script src="app.js?v=brush-palette-custom-quality-20261020"></script>
 </body></html>

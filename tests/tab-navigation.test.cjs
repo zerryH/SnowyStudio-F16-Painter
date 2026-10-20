@@ -16,19 +16,22 @@ const makeEl=(dataset={})=>{
 const sections=panes.map(p=>makeEl({pane:p}));
 const tabs=panes.map(p=>makeEl({paneTarget:p}));
 const tools=['brush','spray','mountain','decal','erase','orbit'].map(t=>makeEl({tool:t}));
-const map={'toolHeading':{textContent:''},'toolSubtitle':{textContent:''},'brushHUD':{textContent:''}};
+const palette=['brush','spray','mountain','erase','line','rectangle','ellipse','square','circle'].map(t=>makeEl({paintTool:t}));
+const config=['brush','spray','mountain','erase','rectangle ellipse square circle','line'].map(t=>makeEl({toolConfig:t}));
+const map={'toolHeading':{textContent:''},'toolSubtitle':{textContent:''},'brushHUD':{textContent:''},'shapeFilled':makeEl()};
 const document={
  querySelectorAll(s){
   if(s==='.panel.left > .section[data-pane]')return sections;
-  if(s==='[data-tool-config]')return [];
+  if(s==='[data-tool-config]')return config;
+  if(s==='[data-paint-tool]')return palette;
   if(s==='.sidebar-tab')return tabs;
   if(s==='.rail-button[data-tool]')return tools;
   throw Error('Unexpected selector: '+s);
  }
 };
 const state={tool:'brush',pane:'paint',lastPaintTool:'brush',size:.24,decalSize:1.4,previewHit:null,previewInside:false};
-const styleTitles={brush:['Paintbrush','Draw'],spray:['Spray','Draw'],mountain:['Mountain','Draw'],decal:['Decals','Preview'],erase:['Eraser','Erase'],orbit:['Camera','Orbit']};
-const context=vm.createContext({state,styleTitles,document,$:id=>map[id],view:{style:{}},requestView(){}});
+const styleTitles={brush:['Paintbrush','Draw'],spray:['Spray','Draw'],mountain:['Mountain','Draw'],decal:['Decals','Preview'],erase:['Eraser','Erase'],line:['Line','Draw'],rectangle:['Rectangle','Draw'],ellipse:['Ellipse','Draw'],square:['Square','Draw'],circle:['Circle','Draw'],orbit:['Camera','Orbit']};
+const context=vm.createContext({state,styleTitles,document,$:id=>map[id],view:{style:{}},clearGhostStroke(){},requestView(){}});
 function extract(startMarker,endMarker){
  const start=source.indexOf(startMarker);assert.ok(start!==-1, 'missing '+startMarker);
  const end=source.indexOf(endMarker,start+startMarker.length);assert.ok(end!==-1,'missing '+endMarker);
@@ -44,7 +47,16 @@ function expect(pane,tool){
  assert.equal(sections.find(x=>!x.hidden).dataset.pane,pane,'visible panel matches pane');
  assert.equal(tabs.filter(x=>x.classList.contains('active')).length,1,'one selected sidebar tab');
  assert.equal(tabs.find(x=>x.classList.contains('active')).dataset.paneTarget,pane,'sidebar tab matches pane');
- assert.equal(tools.find(x=>x.classList.contains('active')).dataset.tool,tool,'rail matches tool');
+ const rail=tools.find(x=>x.classList.contains('active'));
+ if(['line','rectangle','ellipse','square','circle'].includes(tool))assert.equal(rail,undefined,'shape does not falsely select rail');
+ else assert.equal(rail?.dataset.tool,tool,'rail matches tool');
+ const choice=palette.find(x=>x.classList.contains('active'));
+ if(pane==='paint'&&['brush','spray','mountain','erase','line','rectangle','ellipse','square','circle'].includes(tool))
+  assert.equal(choice?.dataset.paintTool,tool,'paint tool grid matches active tool');
+ if(pane!=='paint'||tool==='orbit')assert.equal(choice,undefined,'no stale palette highlight');
+ for(const el of config){
+  assert.equal(el.hidden,!el.dataset.toolConfig.split(' ').includes(tool),'tool-specific controls are gated');
+ }
  for(const s of sections)assert.equal(s.attrs['aria-hidden'],String(s.dataset.pane!==pane),'aria hidden synchronized');
 }
 tabs[1].click();expect('decals','decal');
@@ -58,7 +70,7 @@ tools[4].click();expect('paint','erase');
 tools[3].click();expect('decals','decal');
 tabs[2].click();expect('camo','orbit');
 vm.runInContext("setTool('decal')",context);expect('decals','decal');
-vm.runInContext("setTool('orbit')",context);expect('decals','orbit');
+vm.runInContext("setTool('orbit')",context);expect('paint','orbit');
 vm.runInContext("setTool('brush')",context);expect('paint','brush');
 for(const p of panes){
  assert.match(html,new RegExp('role="tab"[^>]+data-pane-target="'+p+'"'),'tab semantics '+p);
@@ -66,3 +78,16 @@ for(const p of panes){
 }
 assert.ok(html.includes('.panel.left>.section[hidden]{display:none!important}'),'strictly hide inactive panels');
 console.log('PASS: sidebar tabs, rail tools, hidden panel gating, navigation mode, keyboard targets and ARIA state');
+
+// Clicking each visible choice must update rail, panel, tool settings and tool state.
+for(const target of ['spray','mountain','line','rectangle','ellipse','square','circle','erase','brush']){
+ palette.find(x=>x.dataset.paintTool===target).click();expect('paint',target);
+ tabs[1].click();expect('decals','decal');
+ tabs[0].click();expect('paint',target);
+}
+// Shape controls cannot leak into Decals, Camo, or Layers.
+palette.find(x=>x.dataset.paintTool==='rectangle').click();expect('paint','rectangle');
+tabs[2].click();expect('camo','orbit');
+tabs[3].click();expect('layers','orbit');
+tabs[0].click();expect('paint','rectangle');
+console.log('PASS: shape toolbar, 9 paint-tool gates, and roundtrips across every editor pane.');
