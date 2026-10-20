@@ -12,7 +12,7 @@ const V=(x,y,z)=>[x,y,z], sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],add=(a,b)=>
 const baseCanvas=document.createElement('canvas'),camCanvas=document.createElement('canvas'),paintCanvas=document.createElement('canvas'),outCanvas=document.createElement('canvas');
 for(const c of [baseCanvas,camCanvas,paintCanvas,outCanvas]){c.width=W;c.height=H;}
 const base=baseCanvas.getContext('2d',{willReadFrequently:true}), cam=camCanvas.getContext('2d'),paint=paintCanvas.getContext('2d',{willReadFrequently:true}),out=outCanvas.getContext('2d',{willReadFrequently:true});
-const state={tool:'brush',pane:'paint',quality:'fast',lastPaintTool:'brush',style:'round',size:.24,opacity:1,hardness:1,sprayDensity:68,spraySpread:1.45,peakHeight:1.1,peakSpacing:1.5,color:'#101820',decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,strokeTravel:0,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
+const state={tool:'brush',pane:'paint',quality:'fast',lastPaintTool:'brush',style:'round',size:.24,opacity:1,hardness:1,sprayDensity:68,spraySpread:1.45,peakHeight:1.1,peakSpacing:1.5,color:'#101820',colorAlpha:1,decalTint:false,decalOpacity:1,camoTint:false,decalRenderSource:null,decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,strokeTravel:0,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
 const orbit={yaw:.87,pitch:.37,dist:21,target:[.65,.15,0],pos:[0,0,0],right:[0,0,0],up:[0,1,0],forward:[0,0,-1]};
 let program,tex,decalTex,locations,meshes=[],skin=null,lastTexUpload=0,lastMini=0,toastTimer=0,raf=0,lastPointerRay=null,baseAlpha=null,modelTri=0;
 const TILE=256,GRID=W/TILE,dirtyTiles=new Set();
@@ -23,82 +23,26 @@ const renderProfiles={
  balanced:{textureSize:2048,maxPixels:1650000,maxDpr:1.1,paintFps:30,orbitFps:45,idleFps:50,label:'Balanced'},
  detail:{textureSize:4096,maxPixels:2700000,maxDpr:1.5,paintFps:40,orbitFps:60,idleFps:60,label:'Detail'}
 };
-const customQuality={fps:60,unlimited:false,textureSize:2048,maxSide:1800};
 const previewCanvas=document.createElement('canvas');
 const previewCtx=previewCanvas.getContext('2d');
 let previewSize=1024,frameTimer=0,lastDrawTime=-1000,lastStatusTime=0;
 let textureFull=true,activeEdit=null,pendingStrokePoint=null;
-function qualityProfile(){
- if(state.quality!=='custom')return renderProfiles[state.quality]||renderProfiles.fast;
- const fps=customQuality.unlimited?Infinity:customQuality.fps;
- return {textureSize:customQuality.textureSize,maxPixels:customQuality.maxSide**2,
-  maxSide:customQuality.maxSide,maxDpr:3,paintFps:fps,orbitFps:fps,idleFps:fps,label:'Custom'};
-}
-function clampQualityNumber(value,min,max,fallback){
- const n=Number(value);
- return Number.isFinite(n)&&n>=min?Math.round(clamp(n,min,max)):fallback;
-}
-function syncCustomQualityInputs(){
- const fps=$('customFps'),unlimited=$('customUnlimited'),texture=$('customTextureSize'),maxSide=$('customViewportSize');
- if(!fps||!unlimited||!texture||!maxSide)return;
- fps.value=customQuality.fps;
- fps.disabled=customQuality.unlimited;
- unlimited.checked=customQuality.unlimited;
- texture.value=customQuality.textureSize;
- maxSide.value=customQuality.maxSide;
-}
-function readCustomQualityInputs(){
- const fps=$('customFps'),unlimited=$('customUnlimited'),texture=$('customTextureSize'),maxSide=$('customViewportSize');
- customQuality.fps=clampQualityNumber(fps.value,1,1000,customQuality.fps);
- customQuality.unlimited=unlimited.checked;
- customQuality.textureSize=clampQualityNumber(texture.value,256,3000,customQuality.textureSize);
- customQuality.maxSide=clampQualityNumber(maxSide.value,320,3000,customQuality.maxSide);
- syncCustomQualityInputs();
-}
-function saveQualityPreferences(){
- try{localStorage.setItem('snowystudio-quality-v1',JSON.stringify({mode:state.quality,custom:customQuality}));}catch(e){}
-}
-function loadQualityPreferences(){
- try{
-  const raw=localStorage.getItem('snowystudio-quality-v1');
-  if(!raw)return;
-  const data=JSON.parse(raw),c=data?.custom;
-  if(c&&typeof c==='object'){
-   customQuality.fps=clampQualityNumber(c.fps,1,1000,60);
-   customQuality.textureSize=clampQualityNumber(c.textureSize,256,3000,2048);
-   customQuality.maxSide=clampQualityNumber(c.maxSide,320,3000,1800);
-   customQuality.unlimited=c.unlimited===true;
-  }
-  if(['fast','balanced','detail','custom'].includes(data.mode))state.quality=data.mode;
- }catch(e){}
-}
+function qualityProfile(){return renderProfiles[state.quality]||renderProfiles.fast;}
 function setPreviewQuality(next){
- if(next!=='custom'&&!renderProfiles[next])return;
+ if(!renderProfiles[next])return;
  state.quality=next;
  const profile=qualityProfile();
- const changed=previewSize!==profile.textureSize||previewCanvas.width!==profile.textureSize;
  previewSize=profile.textureSize;
- if(changed){
-  previewCanvas.width=previewCanvas.height=previewSize;
-  // Non-power-of-two values such as 3000px use per-tile integer boundaries.
-  // The patch canvas is resized for each destination tile in refreshTexture.
-  textureFull=true;dirtyTiles.clear();state.dirtyTex=true;
- }
- state.needsRender=true;
+ previewCanvas.width=previewCanvas.height=previewSize;
+ const subTile=TILE*previewSize/W;
+ patchCanvas.width=patchCanvas.height=subTile;
+ textureFull=true;
+ dirtyTiles.clear();
+ state.dirtyTex=true;state.needsRender=true;
  const btn=$('previewQualityBtn');
- if(btn){
-  btn.textContent='⚡ '+profile.label+' ▾';
-  btn.title='Choose 3D preview quality and custom FPS settings; skin export stays 4K.';
- }
- for(const option of document.querySelectorAll('[data-quality-option]')){
-  const active=option.dataset.qualityOption===next;
-  option.classList.toggle('active',active);
-  option.setAttribute('aria-pressed',String(active));
- }
+ if(btn){btn.textContent='⚡ '+profile.label;btn.title='3D preview: '+profile.label+' · '+previewSize+'px texture. Export stays 4096px. Click for next mode.';}
  const info=$('perfModeText');
- if(info)info.textContent=profile.label+' · '+previewSize+'px texture · '+
- (state.quality==='custom'?(customQuality.unlimited?'Unlimited':customQuality.fps+' FPS')+' · ':'')+'4K export';
- saveQualityPreferences();
+ if(info)info.textContent=profile.label+' preview · '+previewSize+'px texture · 4K export';
  requestView();
 }
 
@@ -179,7 +123,7 @@ function scheduleFrame(){
  if(raf||frameTimer||document.hidden)return;
  const profile=qualityProfile();
  const fps=state.brushActive?profile.paintFps:state.orbitActive?profile.orbitFps:state.tool==='decal'?profile.paintFps:profile.idleFps;
- const wait=Number.isFinite(fps)?Math.max(0,1000/fps-(performance.now()-lastDrawTime)):0;
+ const wait=Math.max(0,1000/fps-(performance.now()-lastDrawTime));
  if(wait>3){
   frameTimer=setTimeout(()=>{frameTimer=0;if(!raf&&!document.hidden)raf=requestAnimationFrame(frame);},wait);
  }else raf=requestAnimationFrame(frame);
@@ -239,34 +183,49 @@ function refreshTexture(){
    out.drawImage(baseCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
    if(state.showCamo)out.drawImage(camCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
    if(state.showPaint)out.drawImage(paintCanvas,x,y,TILE,TILE,x,y,TILE,TILE);
-   const scale=previewSize/W;
-   const left=Math.round(x*scale),right=Math.round((x+TILE)*scale);
-   const bottom=Math.round((H-y-TILE)*scale),top=Math.round((H-y)*scale);
-   const pw=right-left,ph=top-bottom;
-   if(pw<1||ph<1)continue;
-   if(patchCanvas.width!==pw)patchCanvas.width=pw;
-   if(patchCanvas.height!==ph)patchCanvas.height=ph;
-   patchCtx.clearRect(0,0,pw,ph);
-   patchCtx.drawImage(outCanvas,x,y,TILE,TILE,0,0,pw,ph);
-   // Integer-aligned boundaries correctly cover 3000px and other custom sizes.
-   gl.texSubImage2D(gl.TEXTURE_2D,0,left,bottom,gl.RGBA,gl.UNSIGNED_BYTE,patchCanvas);
+   const subTile=TILE*previewSize/W,scale=previewSize/W;
+   patchCtx.clearRect(0,0,subTile,subTile);
+   patchCtx.drawImage(outCanvas,x,y,TILE,TILE,0,0,subTile,subTile);
+   // Paint source stays 4096²; only the on-screen GPU texture is downsampled.
+   gl.texSubImage2D(gl.TEXTURE_2D,0,Math.round(x*scale),Math.round((H-y-TILE)*scale),gl.RGBA,gl.UNSIGNED_BYTE,patchCanvas);
    if(++batch>=4)break;
   }
   state.dirtyTex=dirtyTiles.size>0;
  }
  lastTexUpload=performance.now();state.needsRender=true;state.needMini=true;
 }
-function setDecalImage(img,label){
- state.image=img;
+
+let decalTintDelay=0;
+function updateDecalRender(){
+ if(!state.image)return;
+ const src=state.image;
+ if(state.decalTint){
+  const originalWidth=src.naturalWidth||src.width,originalHeight=src.naturalHeight||src.height;
+  const scale=Math.min(1,1024/Math.max(originalWidth,originalHeight));
+  const tinted=document.createElement('canvas');
+  tinted.width=Math.max(1,Math.round(originalWidth*scale));
+  tinted.height=Math.max(1,Math.round(originalHeight*scale));
+  const ctx=tinted.getContext('2d');
+  ctx.drawImage(src,0,0,tinted.width,tinted.height);
+  ctx.globalCompositeOperation='source-in';
+  ctx.fillStyle=state.color;
+  ctx.fillRect(0,0,tinted.width,tinted.height);
+  ctx.globalCompositeOperation='source-over';
+  state.decalRenderSource=tinted;
+ }else state.decalRenderSource=src;
  const preview=$('selectedDecalArt');
- preview.src=img instanceof HTMLCanvasElement?img.toDataURL('image/png'):img.src;
- $('selectedDecalName').textContent=label;
- $('decalHint').textContent='Move over the plane to preview. Change size / rotation, then left-click to place. Right-drag rotates the plane.';
+ if(preview)preview.src=state.decalRenderSource instanceof HTMLCanvasElement?
+  state.decalRenderSource.toDataURL('image/png'):src.src;
  gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,decalTex);
  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
- gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
- gl.activeTexture(gl.TEXTURE0);
- requestView();
+ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,state.decalRenderSource);
+ gl.activeTexture(gl.TEXTURE0);requestView();
+}
+function setDecalImage(img,label){
+ state.image=img;
+ $('selectedDecalName').textContent=label;
+ $('decalHint').textContent='Move over the plane to preview. Change size / rotation, then left-click to place. Right-drag rotates the plane.';
+ updateDecalRender();
 }
 function decalPreviewUniforms(){
  // The projected decal lives only in the WebGL frame, NOT on the export texture until clicked.
@@ -287,14 +246,14 @@ function decalPreviewUniforms(){
  gl.uniform1f(locations.decalWidth,state.decalSize);
  gl.uniform1f(locations.decalAspect,ih/iw);
  gl.uniform1f(locations.decalAngle,state.decalRotate*Math.PI/180);
- gl.uniform1f(locations.decalOpacity,Math.min(0.86,Math.max(0.12,state.opacity*0.78)));
+ gl.uniform1f(locations.decalOpacity,Math.min(.96,Math.max(0,state.decalOpacity*(state.decalTint?state.colorAlpha:1)*.86)));
 }
 function frame(time){raf=0;lastDrawTime=time;
  if(state.brushActive&&pendingStrokePoint)flushStrokePoint();
  const w=wrap.clientWidth,h=wrap.clientHeight;
  if(w<1||h<1)return;
  const profile=qualityProfile();
- const dpr=Math.min(window.devicePixelRatio||1,profile.maxDpr,Math.sqrt(profile.maxPixels/(w*h)),(profile.maxSide||Infinity)/Math.max(w,h));
+ const dpr=Math.min(window.devicePixelRatio||1,profile.maxDpr,Math.sqrt(profile.maxPixels/(w*h)));
 
  const dw=Math.max(1,Math.round(w*dpr)),dh=Math.max(1,Math.round(h*dpr));if(view.width!==dw||view.height!==dh){view.width=dw;view.height=dh;gl.viewport(0,0,dw,dh);state.needsRender=true;}
  if(state.dirtyTex&&state.baseLoaded&&(!state.pressed||time-lastTexUpload>42)){refreshTexture();state.needsRender=true;}
@@ -406,7 +365,7 @@ function dab(hit,radius,params={}){
  const r=p.radius*(spray?state.spraySpread:1);
  // A single rect capture, a single 2D stamp. Never a sphere query or per-triangle clip.
  markPaintRect(p.x,p.y,peak?r*Math.max(1.4,state.peakHeight)*1.2:r*1.06);
- paint.save();paint.globalAlpha=state.opacity;
+ paint.save();paint.globalAlpha=state.opacity*state.colorAlpha;
  paint.globalCompositeOperation=erase?'destination-out':'source-over';
  if(peak){
   paint.translate(p.x,p.y);
@@ -443,13 +402,107 @@ function dab(hit,radius,params={}){
  return 1;
 }
 function stampDecal(hit){if(!hit||!state.image)return;const size=state.decalSize,halfDiag=size*.85;let count=0;
- for(const tri of sphereQuery(hit.point,halfDiag+.03)){const m=projectTriangle(tri,hit,halfDiag,'decal');if(!m)continue;markUV(m,size*Math.max(1,(state.image.naturalHeight||state.image.height)/(state.image.naturalWidth||state.image.width))*1.3);paint.save();clipUV(paint,m.uv);paint.setTransform(...m.mat);paint.globalAlpha=state.opacity;
+ for(const tri of sphereQuery(hit.point,halfDiag+.03)){const m=projectTriangle(tri,hit,halfDiag,'decal');if(!m)continue;markUV(m,size*Math.max(1,(state.image.naturalHeight||state.image.height)/(state.image.naturalWidth||state.image.width))*1.3);paint.save();clipUV(paint,m.uv);paint.setTransform(...m.mat);paint.globalAlpha=state.decalOpacity*(state.decalTint?state.colorAlpha:1);
  paint.rotate(state.decalRotate*Math.PI/180);let ih=state.image.naturalHeight||state.image.height,iw=state.image.naturalWidth||state.image.width,ratio=ih/iw;
- paint.drawImage(state.image,-size/2,-size*ratio/2,size,size*ratio);paint.restore();count++;
+ paint.drawImage(state.decalRenderSource||state.image,-size/2,-size*ratio/2,size,size*ratio);paint.restore();count++;
  }if(!count)message('Decal missed the paintable surface; try a flatter view.');}
 const palette=['#101820','#000000','#273c4e','#6c8494','#ffffff','#d5f5fa','#a1dee7','#6a9ac1','#194f69','#d8ded6','#c6b3a1','#9b7160','#ec6d51','#f4ca63','#9b9dd4','#8bcbb3'];
-function setupSwatches(){const el=$('swatches');for(let c of palette){let b=document.createElement('button');b.className='swatch';b.style.background=c;b.title=c;b.addEventListener('click',()=>{state.color=c;$('colorPick').value=c;updateColors();drawToolPreview();});el.append(b);}updateColors();}
+function setupSwatches(){const el=$('swatches');for(let c of palette){let b=document.createElement('button');b.className='swatch';b.style.background=c;b.title=c;b.addEventListener('click',()=>{setGlobalColor(c);});el.append(b);}updateColors();}
 function updateColors(){$('colorCode').textContent=state.color.toUpperCase();for(const e of document.querySelectorAll('.swatch'))e.classList.toggle('active',e.title.toLowerCase()===state.color.toLowerCase());}
+
+// One shared RGB/HEX/HSV/Alpha color editor for Paint, Decals and Camo.
+let lastPickerHue=200,camoTintTimer=0;
+function rgbToHsv(rgb){
+ const [r,g,b]=rgb.map(v=>v/255),max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;
+ let h=0;
+ if(d){switch(max){case r:h=((g-b)/d)%6;break;case g:h=(b-r)/d+2;break;default:h=(r-g)/d+4;}h=(h*60+360)%360;}
+ return {h:d?h:lastPickerHue,s:max?d/max:0,v:max};
+}
+function hsvToRgb(h,s,v){
+ const f=n=>{const k=(n+h/60)%6;return Math.round(255*v*(1-s*Math.max(0,Math.min(k,4-k,1))));};
+ return [f(5),f(3),f(1)];
+}
+function rgbHex(rgb){return '#'+rgb.map(x=>Math.round(x).toString(16).padStart(2,'0')).join('');}
+function paintColorSquare(){
+ const c=$('svPicker');if(!c)return;
+ const ctx=c.getContext('2d'),hue=lastPickerHue,base=rgbHex(hsvToRgb(hue,1,1));
+ ctx.fillStyle=base;ctx.fillRect(0,0,c.width,c.height);
+ let white=ctx.createLinearGradient(0,0,c.width,0);white.addColorStop(0,'#fff');white.addColorStop(1,'#ffffff00');
+ ctx.fillStyle=white;ctx.fillRect(0,0,c.width,c.height);
+ let shade=ctx.createLinearGradient(0,0,0,c.height);shade.addColorStop(0,'#00000000');shade.addColorStop(1,'#000');
+ ctx.fillStyle=shade;ctx.fillRect(0,0,c.width,c.height);
+ const hsv=rgbToHsv(hexRGB(state.color)),x=hsv.s*c.width,y=(1-hsv.v)*c.height;
+ ctx.beginPath();ctx.arc(x,y,7,0,TAU);ctx.lineWidth=2.2;ctx.strokeStyle='#fff';ctx.stroke();
+ ctx.beginPath();ctx.arc(x,y,9,0,TAU);ctx.lineWidth=1.2;ctx.strokeStyle='#0a1724';ctx.stroke();
+}
+function refreshPicker(){
+ if(!$('colorHexInput'))return;
+ const rgb=hexRGB(state.color),hsv=rgbToHsv(rgb);
+ if(hsv.s>.001)lastPickerHue=hsv.h;
+ $('colorHexInput').value=state.color.toUpperCase();
+ $('colorLivePreview').style.background='linear-gradient(rgba('+rgb.join(',')+','+state.colorAlpha+'),rgba('+rgb.join(',')+','+state.colorAlpha+')),repeating-conic-gradient(#fff 0 25%,#999 0 50%) 0/12px 12px';
+ $('globalColorSwatch').style.background=state.color;
+ ['R','G','B'].forEach((name,i)=>{$('rgb'+name).value=rgb[i];$('rgb'+name+'Num').value=rgb[i];});
+ const pct=Math.round(state.colorAlpha*100);
+ $('rgbA').value=pct;$('rgbANum').value=pct;
+ $('hueSlide').value=Math.round(lastPickerHue);$('hueValue').textContent=Math.round(lastPickerHue)+'°';
+ paintColorSquare();
+}
+function updateColorDependents(){
+ $('colorPick').value=state.color;
+ updateColors();drawToolPreview();refreshPicker();
+ if(state.decalTint&&state.image){clearTimeout(decalTintDelay);decalTintDelay=setTimeout(updateDecalRender,80);}
+ if(state.camoTint&&state.camo!=='none'){
+  clearTimeout(camoTintTimer);
+  camoTintTimer=setTimeout(()=>{renderCamo();paintDirty();},170);
+ }
+}
+function setGlobalColor(hex,alpha=state.colorAlpha){
+ if(!/^#[0-9a-fA-F]{6}$/.test(hex))return;
+ state.color=hex.toLowerCase();state.colorAlpha=clamp(alpha,0,1);
+ updateColorDependents();
+}
+function toggleColorEditor(open,context){
+ const root=$('colorEditor');root.hidden=!open;
+ if(open){
+  if(context==='decals'&&!state.decalTint){state.decalTint=true;$('decalTint').checked=true;updateDecalRender();}
+  if(context==='camo'&&!state.camoTint){state.camoTint=true;$('camoTint').checked=true;renderCamo();paintDirty();}
+  refreshPicker();$('colorHexInput').focus();
+ }
+}
+function setupColorEditor(){
+ const root=$('colorEditor');
+ $('globalColorBtn').addEventListener('click',()=>toggleColorEditor(true));
+ document.querySelectorAll('[data-color-open]').forEach(btn=>btn.addEventListener('click',()=>toggleColorEditor(true,btn.dataset.colorOpen)));
+ $('colorEditorClose').addEventListener('click',()=>toggleColorEditor(false));
+ $('colorEditorDone').addEventListener('click',()=>toggleColorEditor(false));
+ root.addEventListener('pointerdown',e=>{if(e.target===root)toggleColorEditor(false);});
+ $('colorHexInput').addEventListener('input',e=>{let v=e.target.value.trim();if(!v.startsWith('#'))v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v))setGlobalColor(v);});
+ for(const name of ['R','G','B','A']){
+  for(const suffix of ['', 'Num']){
+   $('rgb'+name+suffix).addEventListener('input',e=>{
+    const limit=name==='A'?100:255,val=clamp(Number(e.target.value)||0,0,limit);
+    if(name==='A')setGlobalColor(state.color,val/100);
+    else{const rgb=hexRGB(state.color);rgb['RGB'.indexOf(name)]=val;setGlobalColor(rgbHex(rgb));}
+   });
+  }
+ }
+ $('hueSlide').addEventListener('input',e=>{
+  const hsv=rgbToHsv(hexRGB(state.color));lastPickerHue=+e.target.value;
+  setGlobalColor(rgbHex(hsvToRgb(lastPickerHue,hsv.s||1,hsv.v||1)));
+ });
+ const sv=$('svPicker');let dragging=false;
+ const choose=ev=>{
+  const rect=sv.getBoundingClientRect();
+  const x=clamp((ev.clientX-rect.left)/rect.width,0,1),y=clamp((ev.clientY-rect.top)/rect.height,0,1);
+  setGlobalColor(rgbHex(hsvToRgb(lastPickerHue,x,1-y)));
+ };
+ sv.addEventListener('pointerdown',ev=>{dragging=true;sv.setPointerCapture(ev.pointerId);choose(ev);});
+ sv.addEventListener('pointermove',ev=>{if(dragging)choose(ev);});
+ for(const type of ['pointerup','pointercancel'])sv.addEventListener(type,()=>{dragging=false;});
+ $('copyColorHex').addEventListener('click',()=>{if(navigator.clipboard?.writeText)navigator.clipboard.writeText(state.color.toUpperCase()).then(()=>message('Color copied'));else message(state.color.toUpperCase());});
+ refreshPicker();
+}
 const styleTitles={brush:['Solid brush','Draw smooth, continuous lines.'],spray:['Spray paint','Scattered dots for fades and weathering.'],mountain:['Alpine peaks','Place spaced mountain ranges with snowcaps.'],decal:['Decal preview','Hover to inspect the decal before clicking to apply.'],erase:['Eraser','Remove artwork without erasing original detail.'],orbit:['Camera navigation','Drag to rotate the aircraft. No paint applied.']};
 // The selected sidebar page and the active painting tool are one coordinated UI state.
 const paintTools=new Set(['brush','spray','mountain','erase']);
@@ -543,7 +596,7 @@ function selectCamo(name){if(name===state.camo)return;beginHistory('camo');state
 function pseudo(seed){let s=seed|0;return()=>{s=(Math.imul(s,1664525)+1013904223)|0;return(s>>>0)/4294967296;};}
 const camoPalettes={arctic:['#f0f9fa','#a4d4e5','#739cbb','#dcecef'],alpine:['#eef6fb','#a1dbeb','#8faed1','#d8eef4'],digital:['#d5e8e9','#8cb5c5','#537f95','#b5dbd5'],naval:['#b8cbd3','#637c8d','#31485a','#8daab2'],desert:['#d0c1a0','#8e9878','#a48c70','#eee2c8']};
 function renderCamo(){cam.clearRect(0,0,W,H);if(state.camo==='none')return;
- const p=camoPalettes[state.camo],rng=pseudo({arctic:231,alpine:667,digital:431,naval:998,desert:641}[state.camo]);cam.save();cam.globalAlpha=state.camoStrength;
+ const p=state.camoTint?[camoPalettes[state.camo][0],state.color,...camoPalettes[state.camo].slice(2)]:camoPalettes[state.camo],rng=pseudo({arctic:231,alpine:667,digital:431,naval:998,desert:641}[state.camo]);cam.save();cam.globalAlpha=state.camoStrength;
  cam.fillStyle=p[0];cam.globalAlpha=state.camoStrength*.43;cam.fillRect(0,0,W,H);
  const count=state.camo==='digital'?800:state.camo==='alpine'?220:170;
  for(let i=0;i<count;i++){const x=rng()*W,y=rng()*H,s=(.025+rng()*.13)*W,sy=s*(.4+rng()*.9);
@@ -565,13 +618,13 @@ function updateUndo(){
 }
 function beginHistory(kind='paint'){
  if(activeEdit)finishHistory();
- activeEdit={kind,tiles:new Map(),before:{camo:state.camo,strength:state.camoStrength,showCamo:state.showCamo,showPaint:state.showPaint}};
+ activeEdit={kind,tiles:new Map(),before:{camo:state.camo,strength:state.camoStrength,showCamo:state.showCamo,showPaint:state.showPaint,camoTint:state.camoTint}};
 }
 function finishHistory(){
  if(!activeEdit)return;
  const step=activeEdit;activeEdit=null;
- step.after={camo:state.camo,strength:state.camoStrength,showCamo:state.showCamo,showPaint:state.showPaint};
- if(step.tiles.size||step.before.camo!==step.after.camo||step.before.strength!==step.after.strength||step.before.showCamo!==step.after.showCamo||step.before.showPaint!==step.after.showPaint){
+ step.after={camo:state.camo,strength:state.camoStrength,showCamo:state.showCamo,showPaint:state.showPaint,camoTint:state.camoTint};
+ if(step.tiles.size||step.before.camo!==step.after.camo||step.before.strength!==step.after.strength||step.before.showCamo!==step.after.showCamo||step.before.showPaint!==step.after.showPaint||step.before.camoTint!==step.after.camoTint){
   state.undo.push(step);
   if(state.undo.length>HISTORY_LIMIT)state.undo.shift();
   while(state.undo.length>1&&state.undo.reduce((n,item)=>n+(item.tiles?.size||0),0)>120)state.undo.shift();
@@ -593,6 +646,8 @@ function swapHistoryTiles(step){
 function applyCamoHistory(settings){
  state.camo=settings.camo;state.camoStrength=settings.strength;
  state.showCamo=settings.showCamo;state.showPaint=settings.showPaint;
+ state.camoTint=!!settings.camoTint;
+ $('camoTint').checked=state.camoTint;
  $('showCamo').checked=state.showCamo;$('showPaint').checked=state.showPaint;
  $('camoStrength').value=String(Math.round(state.camoStrength*100));
  $('camoOut').textContent=$('camoStrength').value+'%';
@@ -627,7 +682,7 @@ function ghostStroke(p,start=false){
  const c=strokeOverlayCtx,scale=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);
  const width=clamp(state.size*scale*2,2,90);
  c.save();c.lineCap='round';c.lineJoin='round';
- c.globalAlpha=state.tool==='spray'?.30:state.tool==='erase'?.38:.72;
+ c.globalAlpha=(state.tool==='spray'?.30:state.tool==='erase'?.38:.72)*state.colorAlpha;
  c.strokeStyle=state.tool==='erase'?'#b6f4fc':state.color;
  c.fillStyle=c.strokeStyle;c.lineWidth=width;
  if(start||!overlayLast){c.beginPath();c.arc(p[0],p[1],width*.5,0,TAU);c.fill();}
@@ -690,6 +745,66 @@ function setupStamps(){const kinds=[['alpine','Alpine peaks'],['badge','Sukhoi b
  grid.querySelector('[data-stamp="alpine"]').click();setTool('brush');}
 function loadImageFile(f,onReady){if(!f)return;let reader=new FileReader();reader.onload=async()=>{try{let data=reader.result,img=await imageFrom(data);onReady(img);message('Loaded '+f.name);}catch(e){message('Image could not be read. Try PNG or JPG.');}};reader.readAsDataURL(f);}
 function readTGA(bytes){const data=new Uint8Array(bytes),type=data[2],idlen=data[0],w=data[12]+(data[13]<<8),h=data[14]+(data[15]<<8),bits=data[16];if(type!==2||!([24,32].includes(bits))||w<1||h<1||w>8192||h>8192)throw Error('Only uncompressed 24/32-bit TGA supported');let stride=bits/8,start=18+idlen;const c=document.createElement('canvas');c.width=w;c.height=h;const ct=c.getContext('2d');const image=ct.createImageData(w,h),top=(data[17]&32)!==0;for(let y=0;y<h;y++){let srcY=top?y:h-1-y;for(let x=0;x<w;x++){let j=start+(srcY*w+x)*stride,i=(y*w+x)*4;image.data[i]=data[j+2];image.data[i+1]=data[j+1];image.data[i+2]=data[j];image.data[i+3]=stride===4?data[j+3]:255;}}ct.putImageData(image,0,0);return c;}
+
+let normalTGA=null,normalSourceName='';
+function updateNormalUI(){
+ const valid=!!normalTGA;
+ $('exportNormalBtn').disabled=!valid;
+ $('clearNormalBtn').hidden=!valid;
+ $('normalFileName').textContent=valid?
+  'Ready: '+normalSourceName+' · '+(normalTGA.length/1048576).toFixed(1)+' MB · source channels preserved':
+  'No normal map imported — War Thunder uses its original material texture.';
+}
+function validateTGAHeader(bytes){
+ if(bytes.length<18)throw Error('TGA header incomplete');
+ const type=bytes[2],width=bytes[12]|bytes[13]<<8,height=bytes[14]|bytes[15]<<8,depth=bytes[16];
+ if(![2,10].includes(type)||![24,32].includes(depth)||!width||!height||width>8192||height>8192)
+  throw Error('Expected 24/32-bit original or RLE TGA');
+ return {width,height,depth};
+}
+async function importNormalMap(file){
+ if(!file)return;
+ try{
+  let bytes;
+  if(/\.tga$/i.test(file.name)){
+   bytes=new Uint8Array(await file.arrayBuffer());validateTGAHeader(bytes);
+  }else if(file.type==='image/png'||/\.png$/i.test(file.name)){
+   const src=URL.createObjectURL(file);let img;
+   try{img=await imageFrom(src);}finally{URL.revokeObjectURL(src);}
+   if(img.width>8192||img.height>8192)throw Error('Maximum 8192px normal texture');
+   const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;
+   const ct=canvas.getContext('2d',{willReadFrequently:true});ct.drawImage(img,0,0);
+   bytes=tgaRGBA(ct.getImageData(0,0,img.width,img.height),null,img.width,img.height);
+  }else throw Error('Choose .tga or normal-map PNG');
+  normalTGA=bytes;normalSourceName=file.name;updateNormalUI();
+  message('_n normal/material map imported for War Thunder');
+ }catch(error){console.warn(error);message('Normal import: '+error.message);}
+}
+function exportNormalMap(){
+ if(!normalTGA){message('Import the real _n normal map first');return;}
+ makeDownload(normalTGA,'f_16a_block_20_mlu_n.tga');message('Normal TGA exported');
+}
+function exportPlainPNG(){
+ if(!state.baseLoaded)return;
+ compose();outCanvas.toBlob(blob=>{
+  if(blob){makeDownload(blob,'SnowyStudio_F16A_MLU_4096.png','image/png');message('Standalone 4K PNG exported');}
+  else message('PNG export failed');
+ },'image/png');
+}
+async function exportPlainTGA(){
+ if(!state.baseLoaded)return;
+ const b=$('busyModal');b.classList.add('show');
+ $('busyTitle').textContent='Exporting standalone 4K TGA…';
+ $('busyMessage').textContent='Preserving the original aircraft alpha.';
+ await new Promise(ok=>setTimeout(ok,70));
+ try{
+  compose();
+  const color=out.getImageData(0,0,W,H),alpha=base.getImageData(0,0,W,H).data;
+  makeDownload(tgaRGBA(color,alpha),'f_16a_block_20_mlu.tga');
+  message('Standalone 4K color TGA exported');
+ }catch(error){message('TGA export: '+error.message);}
+ finally{b.classList.remove('show');}
+}
 function importBase(f){if(!f)return; if(/\.tga$/i.test(f.name)){let r=new FileReader();r.onload=()=>{try{const c=readTGA(r.result);base.clearRect(0,0,W,H);base.drawImage(c,0,0,W,H);baseAlpha=null;paintDirty();message('Imported TGA base skin');}catch(e){message(e.message);}};r.readAsArrayBuffer(f);}else loadImageFile(f,img=>{base.clearRect(0,0,W,H);base.drawImage(img,0,0,W,H);baseAlpha=null;paintDirty();});}
 async function loadBase(){const img=await imageFrom(window.F16_BASE_SRC);base.drawImage(img,0,0);window.F16_BASE_SRC=null;state.baseLoaded=true;paintDirty();}
 function makeDownload(bytes,name,type='application/octet-stream'){const b=bytes instanceof Blob?bytes:new Blob([bytes],{type});let link=document.createElement('a'),url=URL.createObjectURL(b);link.href=url;link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),45000);}
@@ -702,18 +817,21 @@ async function writeZIP(files){let chunks=[],local=0,records=[];
  for(const file of files){let name=latinBytes(file.name),uncompressed=file.data instanceof Uint8Array?file.data:new Uint8Array(file.data),compressed=await deflate(uncompressed);let c=crc32(uncompressed),header=new Uint8Array(30+name.length),v=new DataView(header.buffer);dword(v,0,0x04034b50);word(v,4,20);word(v,6,0);word(v,8,compressed.method);word(v,10,0);word(v,12,0);dword(v,14,c);dword(v,18,compressed.bytes.length);dword(v,22,uncompressed.length);word(v,26,name.length);word(v,28,0);header.set(name,30);chunks.push(header,compressed.bytes);records.push({name,c,size:uncompressed.length,packed:compressed.bytes.length,method:compressed.method,offset:local});local+=header.length+compressed.bytes.length;}
  let dirStart=local;for(const f of records){const h=new Uint8Array(46+f.name.length),v=new DataView(h.buffer);dword(v,0,0x02014b50);word(v,4,20);word(v,6,20);word(v,8,0);word(v,10,f.method);dword(v,16,f.c);dword(v,20,f.packed);dword(v,24,f.size);word(v,28,f.name.length);dword(v,42,f.offset);h.set(f.name,46);chunks.push(h);local+=h.length;}
  const end=new Uint8Array(22),ve=new DataView(end.buffer);dword(ve,0,0x06054b50);word(ve,8,records.length);word(ve,10,records.length);dword(ve,12,local-dirStart);dword(ve,16,dirStart);chunks.push(end);return new Blob(chunks,{type:'application/zip'});}
-function tgaRGBA(image,alpha){const px=image.data,ret=new Uint8Array(18+W*H*4),header=ret;header[2]=2;header[12]=W&255;header[13]=W>>8;header[14]=H&255;header[15]=H>>8;header[16]=32;header[17]=0x08;const dst=ret;
- for(let y=0;y<H;y++){let ofs=18+y*W*4,src=(H-1-y)*W*4;for(let x=0;x<W;x++){let j=src+x*4,k=ofs+x*4;dst[k]=px[j+2];dst[k+1]=px[j+1];dst[k+2]=px[j];dst[k+3]=alpha?alpha[j+3]:px[j+3];}}return ret;}
+function tgaRGBA(image,alpha,width=W,height=H){const px=image.data,ret=new Uint8Array(18+width*height*4),header=ret;header[2]=2;header[12]=width&255;header[13]=width>>8;header[14]=height&255;header[15]=height>>8;header[16]=32;header[17]=0x08;const dst=ret;
+ for(let y=0;y<height;y++){let ofs=18+y*width*4,src=(height-1-y)*width*4;for(let x=0;x<width;x++){let j=src+x*4,k=ofs+x*4;dst[k]=px[j+2];dst[k+1]=px[j+1];dst[k+2]=px[j];dst[k+3]=alpha?alpha[j+3]:px[j+3];}}return ret;}
 async function exportSkin(){if(!state.baseLoaded)return;const b=$('busyModal');b.classList.add('show');await new Promise(r=>setTimeout(r,90));try{
  $('busyTitle').textContent='Building the 4K TGA…';$('busyMessage').textContent='Preparing 16 million pixels. This may take a few seconds.';compose();const color=out.getImageData(0,0,W,H),a=base.getImageData(0,0,W,H).data;
  let bytes=tgaRGBA(color,a);$('busyTitle').textContent='Packing War Thunder ZIP…';await new Promise(r=>setTimeout(r,60));
- const blk=`name:t="user"\n\nreplace_tex{\n  from:t="f_16a_block_20_mlu_c*"\n  to:t="f_16a_block_20_mlu.tga"\n}\n`;
- const readme=`SNOWYSTUDIO - F-16A Block 20 MLU\n\n1. Extract the enclosed SnowyStudio_F16A_MLU folder into the War Thunder/UserSkins directory.\n2. Choose the F-16A Block 20 MLU in War Thunder, open Customization > User skin, select this folder.\n3. The skin replaces the aircraft's diffuse color texture only. War Thunder continues to use its original normal map.\n4. Texture: 4096x4096 TGA 32-bit BGRA, original alpha preserved.\n\nThis is a user-made texture, not an official Gaijin product.\n`;
- let root='SnowyStudio_F16A_MLU/';let zip=await writeZIP([{name:root+'f_16a_block_20_mlu.tga',data:bytes},{name:root+'f_16a_block_20_mlu.blk',data:latinBytes(blk)},{name:root+'README.txt',data:latinBytes(readme)}]);makeDownload(zip,'SnowyStudio_F16A_MLU_WarThunder.zip','application/zip');message('War Thunder skin exported! Extract into UserSkins.');
+ const blk=['name:t="user"','',
+ 'replace_tex{','  from:t="f_16a_block_20_mlu_c*"','  to:t="f_16a_block_20_mlu.tga"','}']
+ .concat(normalTGA?['','replace_tex{','  from:t="f_16a_block_20_mlu_n*"','  to:t="f_16a_block_20_mlu_n.tga"','}']:[])
+ .join('\n')+'\n';
+ const readme=`SNOWYSTUDIO - F-16A Block 20 MLU\n\n1. Extract the enclosed SnowyStudio_F16A_MLU folder into the War Thunder/UserSkins directory.\n2. Choose the F-16A Block 20 MLU in War Thunder, open Customization > User skin, select this folder.\n3. Color TGA is included. An original _n normal/material TGA is included only if you imported one.\n4. Texture: 4096x4096 TGA 32-bit BGRA, original alpha preserved.\n\nThis is a user-made texture, not an official Gaijin product.\n`;
+ let root='SnowyStudio_F16A_MLU/';const files=[{name:root+'f_16a_block_20_mlu.tga',data:bytes},{name:root+'f_16a_block_20_mlu.blk',data:latinBytes(blk)},{name:root+'README.txt',data:latinBytes(readme)}];if(normalTGA)files.push({name:root+'f_16a_block_20_mlu_n.tga',data:normalTGA});let zip=await writeZIP(files);makeDownload(zip,'SnowyStudio_F16A_MLU_WarThunder.zip','application/zip');message('War Thunder skin exported! Extract into UserSkins.');
  }catch(e){console.error(e);message('Export failed: '+e.message);alert('Export failed: '+e.message);}finally{b.classList.remove('show');}}
-async function saveProject(){if(!state.baseLoaded)return;const obj={format:'snowystudio-project',version:1,created:new Date().toISOString(),aircraft:'f_16a_block_20_mlu',settings:{camo:state.camo,camoStrength:state.camoStrength},base:baseCanvas.toDataURL('image/png'),camo:camCanvas.toDataURL('image/png'),paint:paintCanvas.toDataURL('image/png')};makeDownload(latinBytes(JSON.stringify(obj)),'SnowyStudio_F16_MLU.snowyproject.json','application/json');message('Project saved with editable artwork layers');}
-async function openProject(f){if(!f)return;try{const obj=JSON.parse(await f.text());if(obj.format!=='snowystudio-project'||obj.aircraft!=='f_16a_block_20_mlu')throw Error('Not an F-16 SnowyStudio project');const images=await Promise.all([imageFrom(obj.base),imageFrom(obj.camo),imageFrom(obj.paint)]);base.clearRect(0,0,W,H);cam.clearRect(0,0,W,H);paint.clearRect(0,0,W,H);base.drawImage(images[0],0,0,W,H);cam.drawImage(images[1],0,0,W,H);paint.drawImage(images[2],0,0,W,H);state.camo=obj.settings?.camo||'none';state.camoStrength=obj.settings?.camoStrength||.78;activeEdit=null;state.undo=[];state.redo=[];updateUndo();document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x.dataset.camo===state.camo));paintDirty();message('Project loaded successfully');}catch(e){message('Could not load project: '+e.message);}}
-function setupUI(){setupSwatches();setupStamps();
+async function saveProject(){if(!state.baseLoaded)return;const obj={format:'snowystudio-project',version:1,created:new Date().toISOString(),aircraft:'f_16a_block_20_mlu',settings:{camo:state.camo,camoStrength:state.camoStrength,camoTint:state.camoTint,color:state.color,colorAlpha:state.colorAlpha,normalFile:normalSourceName},base:baseCanvas.toDataURL('image/png'),camo:camCanvas.toDataURL('image/png'),paint:paintCanvas.toDataURL('image/png')};makeDownload(latinBytes(JSON.stringify(obj)),'SnowyStudio_F16_MLU.snowyproject.json','application/json');message('Project saved with editable artwork layers');}
+async function openProject(f){if(!f)return;try{const obj=JSON.parse(await f.text());if(obj.format!=='snowystudio-project'||obj.aircraft!=='f_16a_block_20_mlu')throw Error('Not an F-16 SnowyStudio project');const images=await Promise.all([imageFrom(obj.base),imageFrom(obj.camo),imageFrom(obj.paint)]);base.clearRect(0,0,W,H);cam.clearRect(0,0,W,H);paint.clearRect(0,0,W,H);base.drawImage(images[0],0,0,W,H);cam.drawImage(images[1],0,0,W,H);paint.drawImage(images[2],0,0,W,H);state.camo=obj.settings?.camo||'none';state.camoStrength=obj.settings?.camoStrength??.78;state.camoTint=!!obj.settings?.camoTint;$('camoTint').checked=state.camoTint;if(obj.settings?.color&&/^#[0-9a-fA-F]{6}$/.test(obj.settings.color)){state.color=obj.settings.color.toLowerCase();state.colorAlpha=clamp(obj.settings?.colorAlpha??1,0,1);$('colorPick').value=state.color;updateColors();drawToolPreview();refreshPicker();}normalTGA=null;normalSourceName='';updateNormalUI();if(obj.settings?.normalFile)message('Re-import '+obj.settings.normalFile+' before exporting the _n map.');activeEdit=null;state.undo=[];state.redo=[];updateUndo();document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x.dataset.camo===state.camo));paintDirty();message('Project loaded successfully');}catch(e){message('Could not load project: '+e.message);}}
+function setupUI(){setupSwatches();setupColorEditor();setupStamps();
  for(const e of document.querySelectorAll('.sidebar-tab'))e.addEventListener('click',()=>{
   const pane=e.dataset.paneTarget;
   if(pane==='paint')setTool(state.lastPaintTool||'brush');
@@ -723,32 +841,12 @@ function setupUI(){setupSwatches();setupStamps();
  const drawer=$('uvDrawer');const toggleUV=(open)=>{drawer.classList.toggle('is-open',open);if(open){state.needMini=true;requestView();}$('uvToggle').setAttribute('aria-expanded',String(open));};
  $('uvToggle').addEventListener('click',()=>toggleUV(!drawer.classList.contains('is-open')));
  $('uvClose').addEventListener('click',()=>toggleUV(false));
- const qualityButton=$('previewQualityBtn'),qualityMenu=$('qualityMenu'),qualityWrap=$('qualityWrap');
- function showQualityMenu(show){
-  qualityMenu.hidden=!show;qualityButton.setAttribute('aria-expanded',String(show));
-  $('customQualityFields').hidden=state.quality!=='custom';
-  if(show)syncCustomQualityInputs();
- }
- qualityButton.addEventListener('click',()=>showQualityMenu(qualityMenu.hidden));
- document.addEventListener('pointerdown',e=>{
-  if(!qualityMenu.hidden&&!qualityWrap.contains(e.target))showQualityMenu(false);
+ const qualityButton=$('previewQualityBtn');
+ if(qualityButton)qualityButton.addEventListener('click',()=>{
+  const modes=['fast','balanced','detail'];
+  setPreviewQuality(modes[(modes.indexOf(state.quality)+1)%modes.length]);
  });
- for(const option of document.querySelectorAll('[data-quality-option]')){
-  option.addEventListener('click',()=>{
-   const mode=option.dataset.qualityOption;
-   setPreviewQuality(mode);
-   $('customQualityFields').hidden=mode!=='custom';
-   if(mode==='custom')syncCustomQualityInputs();
-   else showQualityMenu(false);
-  });
- }
- $('customUnlimited').addEventListener('change',()=>{
-  $('customFps').disabled=$('customUnlimited').checked;
- });
- $('applyCustomQuality').addEventListener('click',()=>{
-  readCustomQualityInputs();setPreviewQuality('custom');showQualityMenu(false);
- });
- loadQualityPreferences();syncCustomQualityInputs();setPreviewQuality(state.quality);
+ setPreviewQuality(state.quality);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.needsRender)scheduleFrame();});
   $('zoomIn').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*.78,4.5,60);requestView();});
  $('zoomOut').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*1.28,4.5,60);requestView();});
@@ -761,13 +859,37 @@ function setupUI(){setupSwatches();setupStamps();
  bindRange('peakHeight','peakHeight','peakHeightOut');
  bindRange('peakSpacing','peakSpacing','peakSpacingOut');
  bindRange('brushSize','size','sizeOut');bindRange('opacity','opacity','opacityOut');bindRange('hardness','hardness','hardnessOut');bindRange('decalSize','decalSize','decalSizeOut');bindRange('decalRotate','decalRotate','decalRotateOut');
- $('camoStrength').addEventListener('input',()=>{$('camoOut').textContent=$('camoStrength').value+'%';});$('camoStrength').addEventListener('change',()=>{const v=+$('camoStrength').value/100;if(v===state.camoStrength)return;beginHistory('camo');state.camoStrength=v;renderCamo();paintDirty();finishHistory();});
- $('colorPick').addEventListener('input',e=>{state.color=e.target.value;updateColors();drawToolPreview();});
+ $('decalTint').addEventListener('change',e=>{
+  state.decalTint=e.target.checked;clearTimeout(decalTintDelay);updateDecalRender();
+  message(state.decalTint?'Decal tint enabled — uses selected RGB':'Decal original colors restored');
+ });
+ $('decalOpacity').addEventListener('input',e=>{
+  state.decalOpacity=+e.target.value/100;
+  $('decalOpacityOut').textContent=e.target.value+'%';
+  requestView();
+ });
+ $('camoTint').addEventListener('change',e=>{
+  beginHistory('camo');
+  state.camoTint=e.target.checked;
+  if(state.camo!=='none'){renderCamo();paintDirty();}
+  finishHistory();
+ });
+  $('camoStrength').addEventListener('input',()=>{$('camoOut').textContent=$('camoStrength').value+'%';});$('camoStrength').addEventListener('change',()=>{const v=+$('camoStrength').value/100;if(v===state.camoStrength)return;beginHistory('camo');state.camoStrength=v;renderCamo();paintDirty();finishHistory();});
+ $('colorPick').addEventListener('input',e=>setGlobalColor(e.target.value));
  for(const b of document.querySelectorAll('.preset'))b.addEventListener('click',()=>selectCamo(b.dataset.camo));
  $('showCamo').addEventListener('change',e=>{beginHistory('layers');state.showCamo=e.target.checked;paintDirty();finishHistory();});$('showPaint').addEventListener('change',e=>{beginHistory('layers');state.showPaint=e.target.checked;paintDirty();finishHistory();});
  $('undoBtn').addEventListener('click',undo);$('redoBtn').addEventListener('click',redo);
  $('decalInput').addEventListener('change',e=>loadImageFile(e.target.files[0],img=>{setDecalImage(img,e.target.files[0].name);document.querySelectorAll('.stamp').forEach(x=>x.classList.remove('active'));setTool('decal');$('decalHint').textContent='Previewing '+e.target.files[0].name+' — click model to apply it';}));
- $('baseInput').addEventListener('change',e=>importBase(e.target.files[0]));$('importBaseBtn').addEventListener('click',()=>$('baseInput').click());
+ $('normalInput').addEventListener('change',e=>{importNormalMap(e.target.files?.[0]);e.target.value='';});
+ $('importNormalBtn').addEventListener('click',()=>$('normalInput').click());
+ $('clearNormalBtn').addEventListener('click',()=>{normalTGA=null;normalSourceName='';updateNormalUI();message('Normal map removed from export');});
+ $('exportNormalBtn').addEventListener('click',exportNormalMap);
+ $('exportPngLayerBtn').addEventListener('click',exportPlainPNG);
+ $('exportTgaLayerBtn').addEventListener('click',exportPlainTGA);
+ $('exportPngBtn').addEventListener('click',exportPlainPNG);
+ $('exportTgaBtn').addEventListener('click',exportPlainTGA);
+ updateNormalUI();
+  $('baseInput').addEventListener('change',e=>importBase(e.target.files[0]));$('importBaseBtn').addEventListener('click',()=>$('baseInput').click());
  $('atlasBtn').addEventListener('click',()=>{compose();outCanvas.toBlob(blob=>makeDownload(blob,'SnowyStudio_F16_UV_atlas.png','image/png'),'image/png');});
  $('exportBtn').addEventListener('click',exportSkin);$('projectBtn').addEventListener('click',saveProject);$('loadBtn').addEventListener('click',()=>$('projectInput').click());
  const projectInput=document.createElement('input');projectInput.id='projectInput';projectInput.type='file';projectInput.accept='.json,.snowyproject.json';projectInput.className='hidden';document.body.append(projectInput);projectInput.addEventListener('change',e=>openProject(e.target.files[0]));
@@ -776,7 +898,7 @@ function setupUI(){setupSwatches();setupStamps();
  view.addEventListener('pointerdown',beginStroke);view.addEventListener('pointermove',moveStroke);view.addEventListener('pointerup',endStroke);view.addEventListener('pointercancel',endStroke);view.addEventListener('contextmenu',e=>e.preventDefault());view.addEventListener('pointerleave',()=>{$('cursorPreview').style.display='none';state.previewInside=false;state.previewHit=null;requestView();});
  view.addEventListener('wheel',e=>{e.preventDefault();orbit.dist=clamp(orbit.dist*Math.exp(e.deltaY*.001),4.5,60);requestView();},{passive:false});
  wrap.addEventListener('dragover',e=>{e.preventDefault();});wrap.addEventListener('drop',e=>{e.preventDefault();const f=e.dataTransfer?.files?.[0];if(f&&f.type.startsWith('image/'))loadImageFile(f,img=>{setDecalImage(img,f.name);document.querySelectorAll('.stamp').forEach(x=>x.classList.remove('active'));setTool('decal');message('Image loaded. Hover over the aircraft to preview.');});});
- window.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('qualityMenu').hidden){$('qualityMenu').hidden=true;$('previewQualityBtn').setAttribute('aria-expanded','false');e.preventDefault();return;}if($('helpModal').classList.contains('show')){$('helpModal').classList.remove('show');}else if(state.tool==='decal'){setTool('orbit');message('Decal preview cancelled — no artwork placed.');}e.preventDefault();return;}if(e.target.matches('input,textarea,select'))return;let key=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&key==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();return;}if((e.ctrlKey||e.metaKey)&&key==='y'){e.preventDefault();redo();return;}if(key==='b')setTool('brush');if(key==='d')setTool('decal');if(key==='e')setTool('erase');if(key==='o')setTool('orbit');});
+ window.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('colorEditor').hidden){toggleColorEditor(false);e.preventDefault();return;}if($('helpModal').classList.contains('show')){$('helpModal').classList.remove('show');}else if(state.tool==='decal'){setTool('orbit');message('Decal preview cancelled — no artwork placed.');}e.preventDefault();return;}if(e.target.matches('input,textarea,select'))return;let key=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&key==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();return;}if((e.ctrlKey||e.metaKey)&&key==='y'){e.preventDefault();redo();return;}if(key==='b')setTool('brush');if(key==='d')setTool('decal');if(key==='e')setTool('erase');if(key==='o')setTool('orbit');});
  window.addEventListener('resize',()=>{fitStrokeOverlay();requestView();});
 }
 try{status('Loading F-16 geometry…');initGL();initMesh();setupUI();requestView();loadBase().then(()=>{state.loaded=true;status('F-16 READY · 68k textured triangles');message('F-16 loaded. Paint directly on the aircraft!');}).catch(e=>{console.error(e);status('Could not load base image: '+e.message);message('Texture missing — keep assets folder next to index.html');});}catch(e){console.error('SnowyStudio boot',e);status('Startup error: '+e.message);alert('SnowyStudio failed to start: '+e.message);}

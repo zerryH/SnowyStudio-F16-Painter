@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SnowyStudio V3 — 3D Decal Preview</title>
+<title>SnowyStudio — F-16 Paint & Skin Editor</title>
 <meta name="description" content="Offline 3D texture painter for the War Thunder F-16A Block 20 MLU. Paint directly on the model and export user skins.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2309131f'/%3E%3Cpath d='M8 45L24 20 33 34 42 14 57 45' stroke='%238be5ed' stroke-width='6' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
@@ -102,54 +102,65 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
 .current-mode p{font-size:10.5px;color:#b2c9d4;line-height:1.5;margin:5px 0 10px}
 #toolPreview{display:block;width:100%;height:80px;border-radius:7px;border:1px solid #486777;background:#daeaf0}
 .tool-config{margin:12px 0}.tool-config[hidden],[data-tool-config][hidden]{display:none!important}
-.quality-wrap{position:relative;flex-shrink:0}
-.quality-menu{position:absolute;right:0;top:calc(100% + 9px);width:min(340px,calc(100vw - 20px));max-height:calc(100vh - 90px);overflow-y:auto;z-index:100;background:#142331;border:1px solid #42687a;box-shadow:0 20px 45px #000a;border-radius:12px;padding:15px}
-.quality-menu[hidden],.custom-quality-fields[hidden]{display:none!important}
-.quality-menu-title{display:flex;justify-content:space-between;align-items:center;color:#e3f6ff;font-weight:800;font-size:13px;margin:1px 0 12px}
-.quality-menu-title span{font-size:10px;font-weight:600;color:#86b0bd}
-.quality-options{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-.quality-option{border:1px solid #35536a;background:#203446;border-radius:8px;padding:10px 6px;font-size:11px;font-weight:750}
-.quality-option:hover{background:#285269}
-.quality-option.active{border-color:#68d6e4;background:#1a5967;color:#e1fcff}
-.custom-quality-fields{margin-top:16px;border-top:1px solid #29495a;padding-top:10px}
-.quality-label{font-size:11px;font-weight:750;color:#cbe1e9;display:flex;justify-content:space-between;margin:12px 0 6px}
-.quality-label small{font-size:10px;color:#88aabb;font-weight:500}
-.quality-number{width:100%;background:#0e1d2b;color:#dff8ff;border:1px solid #3c6477;border-radius:8px;padding:10px 12px;font-size:13px;font-variant-numeric:tabular-nums}
-.quality-number:focus{outline:2px solid #73dce9;outline-offset:1px}
-.quality-check{display:flex;align-items:center;gap:8px;font-size:11px;color:#e0eff6;margin:11px 0}
-.quality-check input{width:15px;height:15px;accent-color:#72dce7}
-.quality-check small{font-size:10px;color:#91abb8}
-.quality-note{font-size:10px;color:#98b8c5;line-height:1.5;background:#112b37;border:1px solid #2a5363;border-radius:7px;padding:9px;margin:14px 0}
-.quality-apply{width:100%}
+
+/* Precision Color Lab — independent of painting performance */
+.color-editor-scrim[hidden]{display:none!important}
+.color-editor-scrim{position:fixed;inset:0;z-index:200;background:#020811bc;backdrop-filter:blur(9px);display:flex;align-items:center;justify-content:center;padding:20px}
+.color-editor-dialog{width:min(630px,96vw);max-height:94vh;overflow:auto;background:linear-gradient(155deg,#1c303f,#101b28 68%);border:1px solid #416579;border-radius:17px;box-shadow:0 22px 90px #000c;padding:22px}
+.color-editor-top{display:flex;align-items:flex-start;justify-content:space-between;gap:15px;margin-bottom:17px}
+.color-editor-top h2{font-size:22px;margin:3px 0 3px}
+.color-x{width:33px;height:33px;border:1px solid #426478;border-radius:9px;background:#152738;font-size:24px;line-height:1}
+.color-preview-row{display:flex;align-items:stretch;gap:11px;margin:0 0 20px}
+.color-live-preview{width:64px;min-height:55px;border:1px solid #5d7d8f;border-radius:9px;background:linear-gradient(#101820,#101820),repeating-conic-gradient(#fff 0 25%,#aaa 0 50%) 0/12px 12px;flex-shrink:0}
+.color-hex-field{min-width:0;flex:1;background:#0e1d2b;border:1px solid #3b5968;border-radius:10px;padding:7px 11px}
+.color-hex-field label{display:block;color:#8eb9c9;font-size:9px;letter-spacing:1px;font-weight:800}
+.color-hex-field input{width:100%;border:0;outline:0;background:transparent;color:#e5faff;font:700 19px ui-monospace,monospace;min-width:0}
+.color-grid{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(175px,.88fr);gap:20px}
+#svPicker{width:100%;height:auto;aspect-ratio:256/188;display:block;border-radius:10px;cursor:crosshair;touch-action:none;border:1px solid #516d7d}
+.hue-range{display:block;width:100%;height:16px;appearance:none;border-radius:20px;cursor:pointer;background:linear-gradient(90deg,red,#ff0,lime,#0ff,blue,#f0f,red);margin-top:7px}
+.hue-range::-webkit-slider-thumb,.rgb-range::-webkit-slider-thumb{appearance:none;width:17px;height:17px;border:2px solid white;border-radius:50%;box-shadow:0 2px 5px #0008;background:transparent}
+.rgba-controls .field{margin-top:0;margin-bottom:1px;min-height:22px}
+.rgba-controls .field label{font-size:11px}
+.rgba-controls .field input{width:64px;background:#102535;border:1px solid #426174;border-radius:7px;color:#eaf9fb;text-align:center;padding:3px;font-size:12px;font-weight:700}
+.rgb-range{appearance:none;width:100%;height:9px;border-radius:7px;margin:2px 0 17px;cursor:pointer}
+.rgb-range.red{background:linear-gradient(90deg,#170a0a,#ff4545)}
+.rgb-range.green{background:linear-gradient(90deg,#071d13,#42ed98)}
+.rgb-range.blue{background:linear-gradient(90deg,#09122a,#5b96f9)}
+.rgb-range.alpha{background:linear-gradient(90deg,#2d3645,#b8f4ff)}
+.color-editor-footer{display:flex;justify-content:space-between;align-items:center;gap:16px;padding-top:15px;border-top:1px solid #355364;margin-top:10px}
+.color-global-open{gap:9px}.global-color-chip{width:17px;height:17px;border-radius:5px;border:1px solid #fff7;background:#101820}
+.color-editor-open{width:100%;margin:12px 0;background:#163544;border-color:#3b6370}
+.checkline{display:flex;align-items:center;gap:9px;color:#d2e9f0;font-size:12px;font-weight:700;cursor:pointer;margin:12px 0}
+.checkline input{accent-color:#70deeb}
+.color-pane-controls{margin:15px 0;padding:13px;background:#132535;border:1px solid #2c5366;border-radius:11px}
+.normal-import{margin:16px 0;padding:14px 12px;background:#15283a;border:1px solid #2d4c5e;border-radius:10px}
+.normal-import button{width:100%;margin-top:12px}
+.normal-file{font-size:10.5px;color:#95c0ce;line-height:1.6;margin-top:9px}
+@media(max-width:1320px){#exportPngBtn,#exportTgaBtn{display:none!important}}
+@media(max-width:560px){.color-editor-dialog{padding:15px}.color-grid{grid-template-columns:1fr}.rgba-controls{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}}
 </style></head>
 <body>
+<div id="colorEditor" class="color-editor-scrim" hidden>
+ <section class="color-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="colorEditorTitle">
+  <div class="color-editor-top"><div><div class="eyebrow">SNOWYSTUDIO · COLOR LAB</div><h2 id="colorEditorTitle">Precision color</h2><div class="small-muted">Shared across brushes, decals, and camouflage</div></div><button id="colorEditorClose" class="color-x" type="button" aria-label="Close color picker">×</button></div>
+  <div class="color-preview-row"><div id="colorLivePreview" class="color-live-preview"></div><div class="color-hex-field"><label for="colorHexInput">HEX</label><input id="colorHexInput" type="text" value="#101820" spellcheck="false" maxlength="7" aria-label="Hexadecimal color"></div><button id="copyColorHex" class="btn ghost" type="button" title="Copy HEX">Copy</button></div>
+  <div class="color-grid">
+   <div class="color-graphic"><canvas id="svPicker" width="256" height="188" aria-label="Saturation brightness selector"></canvas><div class="field"><label for="hueSlide">Hue</label><output id="hueValue">204°</output></div><input id="hueSlide" class="hue-range" type="range" min="0" max="360" value="204"></div>
+   <div class="rgba-controls">
+    <div class="field"><label for="rgbR">Red</label><input id="rgbRNum" type="number" min="0" max="255" value="16"></div><input class="rgb-range red" id="rgbR" type="range" min="0" max="255" value="16">
+    <div class="field"><label for="rgbG">Green</label><input id="rgbGNum" type="number" min="0" max="255" value="24"></div><input class="rgb-range green" id="rgbG" type="range" min="0" max="255" value="24">
+    <div class="field"><label for="rgbB">Blue</label><input id="rgbBNum" type="number" min="0" max="255" value="32"></div><input class="rgb-range blue" id="rgbB" type="range" min="0" max="255" value="32">
+    <div class="field"><label for="rgbA">Alpha</label><input id="rgbANum" type="number" min="0" max="100" value="100"></div><input class="rgb-range alpha" id="rgbA" type="range" min="0" max="100" value="100">
+   </div>
+  </div>
+  <div class="color-editor-footer"><span class="small-muted">HEX • RGB • HSV • opacity</span><button id="colorEditorDone" class="btn primary" type="button">Use this color ✓</button></div>
+ </section>
+</div>
 <div class="app">
 <header class="topbar">
  <div class="brand"><div class="brand-icon">⌁</div><div><div class="brand-name">Snowy<span>Studio</span></div><div class="brand-sub">Aircraft skin workshop</div></div></div>
  <div class="sep"></div><div class="topinfo"><span class="dot"></span><strong>F-16A Block 20 MLU</strong><span>·</span>Offline editor</div>
- <div class="topright"><div id="qualityWrap" class="quality-wrap">
- <button class="btn ghost" id="previewQualityBtn" type="button" aria-expanded="false" aria-controls="qualityMenu" title="Customize rendering">⚡ Fast ▾</button>
- <div id="qualityMenu" class="quality-menu" hidden>
-  <div class="quality-menu-title">Preview performance <span>3D only</span></div>
-  <div class="quality-options" role="group" aria-label="Graphics mode">
-   <button class="quality-option active" type="button" data-quality-option="fast">⚡ Fast</button>
-   <button class="quality-option" type="button" data-quality-option="balanced">Balanced</button>
-   <button class="quality-option" type="button" data-quality-option="detail">Detail</button>
-   <button class="quality-option" type="button" data-quality-option="custom">⚙ Custom</button>
-  </div>
-  <div id="customQualityFields" class="custom-quality-fields" hidden>
-   <label class="quality-label" for="customFps">FPS limit <small>1–1000</small></label>
-   <input class="quality-number" id="customFps" type="number" min="1" max="1000" step="1" value="60" inputmode="numeric">
-   <label class="quality-check"><input id="customUnlimited" type="checkbox"> Unlimited FPS <small>(display refresh limit)</small></label>
-   <label class="quality-label" for="customTextureSize">3D texture resolution <small>256–3000 px</small></label>
-   <input class="quality-number" id="customTextureSize" type="number" min="256" max="3000" step="1" value="2048" inputmode="numeric">
-   <label class="quality-label" for="customViewportSize">Max viewport edge <small>320–3000 px</small></label>
-   <input class="quality-number" id="customViewportSize" type="number" min="320" max="3000" step="1" value="1800" inputmode="numeric">
-   <div class="quality-note">Higher settings can increase GPU usage. Unlimited removes SnowyStudio's FPS cap but cannot exceed your browser/display limits. War Thunder export always stays 4096×4096.</div>
-   <button class="btn primary quality-apply" id="applyCustomQuality" type="button">Apply custom settings</button>
-  </div>
- </div>
-</div><button class="btn ghost uv-launch" id="uvToggle" title="Show the texture UV atlas">▦ UV</button><button class="btn icon" id="undoBtn" title="Undo Ctrl+Z" disabled>↶</button><button class="btn icon" id="redoBtn" title="Redo Ctrl+Y" disabled>↷</button><button class="btn ghost" id="projectBtn">↓ Project</button><button class="btn ghost" id="loadBtn">↑ Open</button><button class="btn primary" id="exportBtn">↥ Export War Thunder skin</button></div>
+ <div class="topright"><button class="btn ghost color-global-open" id="globalColorBtn" title="Open RGB / HEX / Alpha color editor"><span id="globalColorSwatch" class="global-color-chip"></span> Color</button><button class="btn ghost" id="previewQualityBtn" title="Select preview quality. 4K export is unchanged.">⚡ Fast</button><button class="btn ghost uv-launch" id="uvToggle" title="Show the texture UV atlas">▦ UV</button><button class="btn icon" id="undoBtn" title="Undo Ctrl+Z" disabled>↶</button><button class="btn icon" id="redoBtn" title="Redo Ctrl+Y" disabled>↷</button><button class="btn ghost" id="projectBtn">↓ Project</button><button class="btn ghost" id="loadBtn">↑ Open</button><button class="btn ghost" id="exportPngBtn" title="Export standalone painted color texture PNG">↓ PNG</button><button class="btn ghost" id="exportTgaBtn" title="Export standalone diffuse color TGA">↓ TGA</button><button class="btn primary" id="exportBtn">↥ Export War Thunder skin</button></div>
 </header>
 <div class="workspace">
 <nav class="rail" aria-label="Tools">
@@ -184,21 +195,41 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
   <div class="tool-hint">Drag to stamp separate hand-drawn mountain groups. Increase spacing for isolated peaks.</div>
  </div>
  <div class="section-title">Paint color</div><div class="color-row"><input id="colorPick" class="colorpick" type="color" value="#101820"><span class="colorcode" id="colorCode">#101820</span><span class="small-muted">Solid RGB</span></div>
- <div class="swatches" id="swatches"></div></div>
+ <button class="btn color-editor-open" data-color-open="paint" type="button">↗ Advanced RGB / HEX / Alpha</button><div class="swatches" id="swatches"></div></div>
  <div id="decalsPane" role="tabpanel" class="section" data-pane="decals"><div class="section-title">Custom graphics <span class="subtle">Live decal preview</span></div><div class="stamps" id="stampGrid"></div><div style="height:11px"></div><label class="upload-zone" for="decalInput"><strong>＋ Upload PNG / image</strong><small>Transparent PNG works best · Paste directly onto the 3D model</small></label><input id="decalInput" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" class="hidden">
  <div class="selected-decal"><div class="selected-decal-label">Selected decal <span class="preview-tag">LIVE PREVIEW</span></div><div class="decal-selected-row"><div class="decal-art-bg"><img id="selectedDecalArt" alt="Selected decal preview"></div><div class="decal-selected-text"><strong id="selectedDecalName">Alpine peaks</strong><span>Move over the aircraft to see the decal before you commit.</span><small>Left-click to apply · Right-drag to orbit · Esc to cancel</small></div></div></div>
  <div class="stack-gap"><div class="field"><label for="decalSize">Decal width</label><output id="decalSizeOut">1.40 m</output></div><input class="range" type="range" id="decalSize" min="0.1" max="7" value="1.4" step="0.05"></div>
  <div class="field"><label for="decalRotate">Rotation</label><output id="decalRotateOut">0°</output></div><input class="range" id="decalRotate" type="range" min="-180" max="180" step="1" value="0">
+ <div class="color-pane-controls">
+ <div class="field"><label for="decalOpacity">Decal opacity</label><output id="decalOpacityOut">100%</output></div>
+ <input class="range" id="decalOpacity" type="range" min="0" max="100" value="100">
+ <label class="checkline"><input type="checkbox" id="decalTint"> Tint decal with custom RGB color</label>
+ <button class="btn color-editor-open" data-color-open="decals" type="button">◉ Choose decal RGB / HEX</button>
+ <p class="small-muted">Tint replaces the decal's colors but retains transparency. Uncheck to preserve the original image.</p>
+ </div>
  <div class="tool-hint" id="decalHint">Move over the plane to preview, then click to place. Size and rotation update in real time.</div></div>
  <div id="camoPane" role="tabpanel" class="section" data-pane="camo"><div class="section-title">One-click camouflage <span class="subtle">Editable underneath</span></div><div class="preset-grid" id="camos"><button class="preset none active" data-camo="none"><div class="preset-bar"></div><div class="preset-name">Original</div><div class="preset-meta">Clear camo overlay</div></button>
  <button class="preset" data-camo="arctic"><div class="preset-bar"></div><div class="preset-name">Arctic</div><div class="preset-meta">Winter white / ice</div></button><button class="preset" data-camo="alpine"><div class="preset-bar"></div><div class="preset-name">Alpine</div><div class="preset-meta">Snow mountain blue</div></button><button class="preset" data-camo="digital"><div class="preset-bar"></div><div class="preset-name">Digital</div><div class="preset-meta">Pixel camo</div></button><button class="preset" data-camo="naval"><div class="preset-bar"></div><div class="preset-name">Naval</div><div class="preset-meta">Gray sea tones</div></button><button class="preset" data-camo="desert"><div class="preset-bar"></div><div class="preset-name">Desert</div><div class="preset-meta">Tan / sage</div></button></div>
+ <div class="color-pane-controls">
+ <label class="checkline"><input type="checkbox" id="camoTint"> Use custom RGB as camo accent color</label>
+ <button class="btn color-editor-open" data-color-open="camo" type="button">◉ Edit camouflage accent RGB</button>
+ <p class="small-muted">Custom color replaces the main accent of the selected camouflage preset.</p>
+ </div>
  <div class="stack-gap"><div class="field"><label for="camoStrength">Camo strength</label><output id="camoOut">78%</output></div><input class="range" id="camoStrength" type="range" min="10" max="100" value="78"></div></div>
- <div id="layersPane" role="tabpanel" class="section" data-pane="layers"><div class="section-title">Layers</div><label class="layer-row"><span class="layer-square">✎</span><span class="layer-desc"><b>Artwork + decals</b><div>Your brush strokes & images</div></span><input class="check" id="showPaint" type="checkbox" checked></label><label class="layer-row"><span class="layer-square">◈</span><span class="layer-desc"><b>Camouflage</b><div>Generated preset patterns</div></span><input class="check" id="showCamo" type="checkbox" checked></label><div class="layer-row locked"><span class="layer-square">▤</span><span class="layer-desc"><b>Base aircraft</b><div>Original 4096 × 4096 texture</div></span><span>🔒</span></div><button id="importBaseBtn" class="btn" style="width:100%;margin-top:9px">↥ Import your own base skin</button><input id="baseInput" type="file" accept="image/png,image/webp,image/jpeg,.tga" class="hidden"></div>
+ <div id="layersPane" role="tabpanel" class="section" data-pane="layers"><div class="section-title">Layers</div><label class="layer-row"><span class="layer-square">✎</span><span class="layer-desc"><b>Artwork + decals</b><div>Your brush strokes & images</div></span><input class="check" id="showPaint" type="checkbox" checked></label><label class="layer-row"><span class="layer-square">◈</span><span class="layer-desc"><b>Camouflage</b><div>Generated preset patterns</div></span><input class="check" id="showCamo" type="checkbox" checked></label><div class="layer-row locked"><span class="layer-square">▤</span><span class="layer-desc"><b>Base aircraft</b><div>Original 4096 × 4096 texture</div></span><span>🔒</span></div><button id="importBaseBtn" class="btn" style="width:100%;margin-top:9px">↥ Import your own base skin</button><input id="baseInput" type="file" accept="image/png,image/webp,image/jpeg,.tga" class="hidden">
+ <div class="normal-import"><div class="section-title">Standalone exports</div><p class="small-muted">Save just your texture, without a War Thunder ZIP.</p><div style="display:flex;gap:8px"><button id="exportPngLayerBtn" class="btn" type="button">↓ 4K PNG</button><button id="exportTgaLayerBtn" class="btn" type="button">↓ 4K TGA</button></div></div>
+ <div class="normal-import"><div class="section-title">Normal / material map <span class="subtle">Optional</span></div>
+ <p class="small-muted">For War Thunder's _n texture, import the original aircraft normal map. Do not use a copy of the color texture.</p>
+ <button id="importNormalBtn" class="btn" type="button">↥ Import _n map (.tga / PNG)</button>
+ <input id="normalInput" class="hidden" type="file" accept=".tga,image/png">
+ <div id="normalFileName" class="normal-file">No normal map imported — export uses the game's existing material map.</div>
+ <button id="clearNormalBtn" class="btn ghost" type="button" hidden>Remove imported normal map</button>
+ </div></div>
 </aside>
 <main class="viewport" id="viewWrap"><canvas id="view3d" aria-label="Interactive F-16 3D model painter"></canvas><canvas id="strokeOverlay" aria-hidden="true"></canvas><div id="cursorPreview"></div><div class="viewtop"><span class="view-chip accent">● FAST 4K UV PAINT</span><span class="view-chip" id="brushHUD">SOLID · 0.24 m</span></div><div class="viewbar" id="cameraBar"><button class="camera-btn active" data-camera="iso">3D</button><button class="camera-btn" data-camera="top">Top</button><button class="camera-btn" data-camera="right">Right</button><button class="camera-btn" data-camera="left">Left</button><button class="camera-btn" data-camera="bottom">Bottom</button><button class="camera-btn" data-camera="front">Nose</button><span class="view-tools-divider"></span><button class="camera-btn" id="zoomOut" title="Zoom out">−</button><button class="camera-btn" id="zoomIn" title="Zoom in">＋</button><button class="camera-btn" id="fitView" title="Reset camera">Fit</button></div>
 <div class="v-bottom"><div class="assist"><strong>Decals:</strong> hover to preview, click to place &nbsp;·&nbsp; <strong>Right drag</strong> rotate &nbsp;·&nbsp; <strong>Scroll</strong> zoom<br><strong>Alt + drag</strong> orbit &nbsp;·&nbsp; <strong>Ctrl + Z</strong> undo &nbsp;·&nbsp; <strong>B / D / E / O</strong> tools</div><div class="view-chip" id="perfModeText" style="font-size:10px">Fast preview · 1024px texture · 4K export</div><div class="viewstat" id="status">Preparing F-16 geometry…</div></div></main>
 <aside class="panel right" id="uvDrawer"><div class="uv-drawer-head"><strong>UV texture & reference</strong><button id="uvClose" aria-label="Close UV panel">×</button></div><div class="panel-heading"><div class="eyebrow">UV output</div><h2>Texture atlas</h2><div class="small-muted">Live paint on the original 4K game texture.</div></div>
-<div class="section"><div class="section-title">UV preview <span class="pill">4K</span></div><div class="mini-wrap"><canvas id="atlasPreview" width="440" height="440"></canvas></div><div class="ruler"><span>0</span><span>4096 × 4096</span><span>1</span></div><button class="btn" id="atlasBtn" style="width:100%;margin-top:13px">Download 4K atlas ↓</button></div>
+<div class="section"><div class="section-title">UV preview <span class="pill">4K</span></div><div class="mini-wrap"><canvas id="atlasPreview" width="440" height="440"></canvas></div><div class="ruler"><span>0</span><span>4096 × 4096</span><span>1</span></div><button class="btn" id="atlasBtn" style="width:100%;margin-top:13px">Download 4K atlas ↓</button><div class="stack-gap"><button class="btn" id="exportNormalBtn" type="button" style="width:100%" disabled>↓ Export imported _n.tga</button></div></div>
 <div class="section"><div class="section-title">Output format</div><div class="spec"><span>Aircraft</span><strong>F-16A Block 20 MLU</strong></div><div class="spec"><span>Color texture</span><strong>TGA RGBA 32-bit</strong></div><div class="spec"><span>Image size</span><strong>4096 × 4096</strong></div><div class="spec"><span>Download</span><strong>War Thunder ZIP</strong></div><div class="spec"><span>Normal map</span><strong>Game default</strong></div><div class="spec"><span>Panel details</span><strong>Preserved</strong></div></div>
 <div class="section"><div class="section-title">Inspiration</div><img src="assets/inspiration.webp" style="width:100%;border-radius:9px;border:1px solid #385263" alt="Original winter mountain F-16 concept" title="Original user-provided SnowySukhoi reference"><div class="small-muted" style="margin-top:9px">Use the mountain and roundel stamps to build your own reference-inspired livery.</div></div>
 <div class="section"><button id="helpSide" class="btn" style="width:100%">? Quick guide & shortcuts</button></div></aside>
@@ -246,5 +277,5 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
 <script src="assets/texture-part-21.js"></script>
 <script src="assets/texture-part-22.js"></script>
 <script src="assets/texture-part-23.js"></script>
-<script src="assets/texture-final.js"></script><script src="app.js?v=custom-graphics-20261020"></script>
+<script src="assets/texture-final.js"></script><script src="app.js?v=color-lab-20261020"></script>
 </body></html>
