@@ -4,6 +4,8 @@
 (()=>{
 const $=id=>document.getElementById(id), W=4096,H=4096, TAU=Math.PI*2;
 const view=$('view3d'), wrap=$('viewWrap'), hint=$('status'), mini=$('atlasPreview'), miniCtx=mini.getContext('2d');
+const strokeOverlay=$('strokeOverlay'), strokeOverlayCtx=strokeOverlay?strokeOverlay.getContext('2d'):null;
+let overlayLast=null;
 const toast=$('toast'), gl=view.getContext('webgl2',{antialias:false,alpha:true,preserveDrawingBuffer:false,desynchronized:true,powerPreference:'high-performance'});
 if(!gl){hint.textContent='WebGL2 unavailable · enable hardware acceleration in Chrome / Edge'; alert('SnowyStudio needs WebGL2. Enable hardware acceleration in Chrome or Edge.');return;}
 const V=(x,y,z)=>[x,y,z], sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],mul=(a,s)=>[a[0]*s,a[1]*s,a[2]*s],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],len=a=>Math.hypot(...a),unit=a=>mul(a,1/(len(a)||1)),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -17,7 +19,7 @@ const TILE=256,GRID=W/TILE,dirtyTiles=new Set();
 const patchCanvas=document.createElement('canvas');patchCanvas.width=patchCanvas.height=TILE;
 const patchCtx=patchCanvas.getContext('2d');
 const renderProfiles={
- fast:{textureSize:1024,maxPixels:850000,maxDpr:.9,paintFps:22,orbitFps:32,idleFps:35,label:'Fast'},
+ fast:{textureSize:1024,maxPixels:850000,maxDpr:.9,paintFps:30,orbitFps:38,idleFps:35,label:'Fast'},
  balanced:{textureSize:2048,maxPixels:1650000,maxDpr:1.1,paintFps:30,orbitFps:45,idleFps:50,label:'Balanced'},
  detail:{textureSize:4096,maxPixels:2700000,maxDpr:1.5,paintFps:40,orbitFps:60,idleFps:60,label:'Detail'}
 };
@@ -239,7 +241,7 @@ function frame(time){raf=0;lastDrawTime=time;
   gl.viewport(0,0,dw,dh);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
   gl.useProgram(program);gl.uniformMatrix4fv(locations.vp,false,vpMatrix(w/h));gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,decalTex);decalPreviewUniforms();gl.activeTexture(gl.TEXTURE0);
   for(const m of meshes){if(m.kind==='glass')continue;gl.bindVertexArray(m.vao);gl.uniform1f(locations.useTex,m.kind==='skin'?1:0);gl.uniform1f(locations.alpha,1);gl.uniform1f(locations.previewOn,m.kind==='skin'&&state.tool==='decal'&&state.previewHit&&state.previewInside&&!state.orbitActive&&!state.pressed?1:0);let c=m.kind==='cockpit'?[.14,.19,.24]:[.4,.48,.53];gl.uniform3fv(locations.tint,c);gl.drawElements(gl.TRIANGLES,m.idx.length,gl.UNSIGNED_INT,0);}
-  gl.uniform1f(locations.previewOn,0);gl.depthMask(false);for(const m of meshes){if(m.kind!=='glass')continue;gl.bindVertexArray(m.vao);gl.uniform1f(locations.useTex,0);gl.uniform1f(locations.alpha,.35);gl.uniform3fv(locations.tint,[.16,.33,.39]);gl.drawElements(gl.TRIANGLES,m.idx.length,gl.UNSIGNED_INT,0);}gl.depthMask(true);gl.bindVertexArray(null);state.needsRender=false;
+  gl.uniform1f(locations.previewOn,0);gl.depthMask(false);for(const m of meshes){if(m.kind!=='glass')continue;gl.bindVertexArray(m.vao);gl.uniform1f(locations.useTex,0);gl.uniform1f(locations.alpha,.35);gl.uniform3fv(locations.tint,[.16,.33,.39]);gl.drawElements(gl.TRIANGLES,m.idx.length,gl.UNSIGNED_INT,0);}gl.depthMask(true);gl.bindVertexArray(null);state.needsRender=false;if(!state.dirtyTex)clearGhostStroke();
  }
  if(state.dirtyTex)requestView();
 }
@@ -293,68 +295,90 @@ function projectTriangle(tri,hit,size,mode){const p=triCoords(tri),uv=triUV(tri)
 }
 function clipUV(ctx,uv){ctx.beginPath();ctx.moveTo(uv[0][0],uv[0][1]);ctx.lineTo(uv[1][0],uv[1][1]);ctx.lineTo(uv[2][0],uv[2][1]);ctx.closePath();ctx.clip();}
 
-// Brush is a continuous filled mark. Spray is particulate. Peak is a spaced, detailed skyline.
+// The CPU paint loop intentionally does NOT walk nearby 3D triangles for brush strokes.
+// One raycast already returns a UV coordinate; drawing into that location is much cheaper.
+const sprayStamp=document.createElement('canvas');sprayStamp.width=sprayStamp.height=256;
+const sprayStampCtx=sprayStamp.getContext('2d');
+let sprayStampKey='',paintDabSerial=0;
+function uvDabGeometry(hit,radius){
+ const uv=triUV(hit.tri),world=triCoords(hit.tri);
+ const w1=sub(world[1],world[0]),w2=sub(world[2],world[0]);
+ const realArea=len(cross(w1,w2));
+ const ux=uv[1][0]-uv[0][0],uy=uv[1][1]-uv[0][1];
+ const vx=uv[2][0]-uv[0][0],vy=uv[2][1]-uv[0][1];
+ const uvArea=Math.abs(ux*vy-uy*vx);
+ const density=realArea>1e-8?Math.sqrt(uvArea/realArea):180;
+ return {x:hit.uv[0]*W,y:(1-hit.uv[1])*H,
+  radius:clamp(radius*clamp(density,35,1800),1.3,600)};
+}
+function markPaintRect(x,y,r){
+ const left=Math.max(0,Math.floor((x-r-3)/TILE));
+ const right=Math.min(GRID-1,Math.floor((x+r+3)/TILE));
+ const top=Math.max(0,Math.floor((y-r-3)/TILE));
+ const bottom=Math.min(GRID-1,Math.floor((y+r+3)/TILE));
+ if(right<left||bottom<top)return;
+ for(let ty=top;ty<=bottom;ty++)for(let tx=left;tx<=right;tx++)markTile(ty*GRID+tx);
+}
+function rebuildSprayStamp(kind){
+ const key=[kind,state.color,state.sprayDensity,state.spraySpread].join('/');
+ if(sprayStampKey===key)return;
+ sprayStampKey=key;
+ const ctx=sprayStampCtx;ctx.clearRect(0,0,256,256);
+ const rng=pseudo(29173);
+ const chalk=kind==='chalk',total=chalk?150:Math.round(state.sprayDensity*3.2);
+ const rgba=hexRGB(state.color);
+ ctx.fillStyle='rgb('+rgba.join(',')+')';
+ for(let i=0;i<total;i++){
+  const a=rng()*TAU,r=Math.sqrt(rng())*119;
+  const x=128+Math.cos(a)*r,y=128+Math.sin(a)*r;
+  ctx.globalAlpha=(chalk?.29:.13)+(.40*(1-r/119))*rng();
+  const dot=chalk?.6+rng()*1.9:1.2+rng()*2.8;
+  ctx.beginPath();ctx.arc(x,y,dot,0,TAU);ctx.fill();
+ }
+ ctx.globalAlpha=1;
+}
 function dab(hit,radius,params={}){
  if(!hit)return 0;
- const t=state.tool,peak=t==='mountain',spray=t==='spray',erase=t==='erase';
- const reach=radius*(spray?state.spraySpread:1);
- const tris=sphereQuery(hit.point,reach*1.6+.04);
- const rgb=hexRGB(state.color);let count=0;
- for(const tri of tris){
-  const m=projectTriangle(tri,hit,reach,peak?'peak':'brush');
-  if(!m)continue;
-  markUV(m,peak?radius*Math.max(1.3,state.peakHeight)*2:reach*1.2);
-  paint.save();clipUV(paint,m.uv);paint.setTransform(...m.mat);
-  paint.globalAlpha=state.opacity;
-  paint.globalCompositeOperation=erase?'destination-out':'source-over';
-  if(peak){
-   const h=state.peakHeight;
-   paint.strokeStyle=state.color;paint.lineWidth=radius*.072;
-   paint.lineCap='round';paint.lineJoin='round';paint.beginPath();
-   paint.moveTo(-radius,radius*.35);
-   paint.lineTo(-radius*.79,-radius*.12*h);
-   paint.lineTo(-radius*.60,radius*.10);
-   paint.lineTo(-radius*.28,-radius*.96*h);
-   paint.lineTo(radius*.03,radius*.08);
-   paint.lineTo(radius*.24,-radius*.47*h);
-   paint.lineTo(radius*.41,-radius*.06);
-   paint.lineTo(radius*.65,-radius*.67*h);
-   paint.lineTo(radius*.86,radius*.06);
-   paint.lineTo(radius,radius*.32);paint.stroke();
-   paint.lineWidth=radius*.027;paint.beginPath();
-   paint.moveTo(-radius*.43,-radius*.49*h);
-   paint.lineTo(-radius*.28,-radius*.34*h);
-   paint.lineTo(-radius*.12,-radius*.51*h);
-   paint.moveTo(radius*.56,-radius*.38*h);
-   paint.lineTo(radius*.66,-radius*.29*h);
-   paint.lineTo(radius*.73,-radius*.38*h);
-   paint.stroke();
-  }else if(spray||(state.style==='chalk'&&!erase)){
-   const r=radius*(spray?state.spraySpread:.90);
-   const seed=tri*37+Math.floor(hit.point[0]*719)*53+Math.floor(hit.point[1]*543)*23;
-   const rand=k=>{const n=Math.sin(k*12.9898+seed*78.233)*43758.5453;return n-Math.floor(n);};
-   const N=spray?Math.round(state.sprayDensity):58;
-   paint.fillStyle=state.color;
-   for(let j=0;j<N;j++){
-    const angle=rand(j+5)*TAU,distance=Math.sqrt(rand(j+997))*r;
-    const x=Math.cos(angle)*distance,y=Math.sin(angle)*distance;
-    const dotRadius=r*(spray?.013:.025)*(.3+rand(j+225));
-    paint.globalAlpha=state.opacity*(spray?.22+.68*(1-distance/r):.7);
-    paint.beginPath();paint.arc(x,y,dotRadius,0,TAU);paint.fill();
-   }
-  }else{
-   paint.fillStyle=state.color;
-   if(!erase&&(state.style==='soft'||state.hardness<.98)){
-    const grad=paint.createRadialGradient(0,0,radius*state.hardness*.75,0,0,radius);
-    grad.addColorStop(0,state.color);
-    grad.addColorStop(1,'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0)');
-    paint.fillStyle=grad;
-   }
-   paint.beginPath();paint.arc(0,0,radius,0,TAU);paint.fill();
+ const p=uvDabGeometry(hit,radius),t=state.tool;
+ const spray=t==='spray',peak=t==='mountain',erase=t==='erase';
+ const r=p.radius*(spray?state.spraySpread:1);
+ // A single rect capture, a single 2D stamp. Never a sphere query or per-triangle clip.
+ markPaintRect(p.x,p.y,peak?r*Math.max(1.4,state.peakHeight)*1.2:r*1.06);
+ paint.save();paint.globalAlpha=state.opacity;
+ paint.globalCompositeOperation=erase?'destination-out':'source-over';
+ if(peak){
+  paint.translate(p.x,p.y);
+  const h=state.peakHeight;
+  paint.strokeStyle=state.color;paint.lineWidth=Math.max(1,r*.072);
+  paint.lineCap='round';paint.lineJoin='round';
+  paint.beginPath();
+  paint.moveTo(-r,r*.35);paint.lineTo(-r*.79,-r*.12*h);
+  paint.lineTo(-r*.60,r*.10);paint.lineTo(-r*.28,-r*.96*h);
+  paint.lineTo(r*.03,r*.08);paint.lineTo(r*.24,-r*.47*h);
+  paint.lineTo(r*.41,-r*.06);paint.lineTo(r*.65,-r*.67*h);
+  paint.lineTo(r*.86,r*.06);paint.lineTo(r,r*.32);paint.stroke();
+  paint.lineWidth=Math.max(.5,r*.027);paint.beginPath();
+  paint.moveTo(-r*.43,-r*.49*h);paint.lineTo(-r*.28,-r*.34*h);paint.lineTo(-r*.12,-r*.51*h);
+  paint.moveTo(r*.56,-r*.38*h);paint.lineTo(r*.66,-r*.29*h);paint.lineTo(r*.73,-r*.38*h);paint.stroke();
+ }else if(spray||(state.style==='chalk'&&!erase)){
+  rebuildSprayStamp(spray?'spray':'chalk');
+  // One pre-rendered particle sprite instead of drawing thousands of circles.
+  paint.translate(p.x,p.y);
+  paint.rotate((++paintDabSerial%7)*.8976);
+  paint.drawImage(sprayStamp,-r,-r,r*2,r*2);
+ }else{
+  paint.fillStyle=state.color;
+  if(!erase&&(state.style==='soft'||state.hardness<.98)){
+   const rgb=hexRGB(state.color);
+   const grad=paint.createRadialGradient(p.x,p.y,r*state.hardness*.75,p.x,p.y,r);
+   grad.addColorStop(0,state.color);
+   grad.addColorStop(1,'rgba('+rgb.join(',')+',0)');
+   paint.fillStyle=grad;
   }
-  paint.restore();count++;
+  paint.beginPath();paint.arc(p.x,p.y,r,0,TAU);paint.fill();
  }
- return count;
+ paint.restore();
+ return 1;
 }
 function stampDecal(hit){if(!hit||!state.image)return;const size=state.decalSize,halfDiag=size*.85;let count=0;
  for(const tri of sphereQuery(hit.point,halfDiag+.03)){const m=projectTriangle(tri,hit,halfDiag,'decal');if(!m)continue;markUV(m,size*Math.max(1,(state.image.naturalHeight||state.image.height)/(state.image.naturalWidth||state.image.width))*1.3);paint.save();clipUV(paint,m.uv);paint.setTransform(...m.mat);paint.globalAlpha=state.opacity;
@@ -528,11 +552,35 @@ function redo(){
  updateUndo();message('Redo');
 }
 function imageFrom(src){return new Promise((ok,no)=>{let im=new Image();im.onload=()=>ok(im);im.onerror=no;im.src=src;});}
+function fitStrokeOverlay(){
+ if(!strokeOverlay)return;
+ const w=Math.round(wrap.clientWidth),h=Math.round(wrap.clientHeight);
+ if(strokeOverlay.width!==w||strokeOverlay.height!==h){
+  strokeOverlay.width=w;strokeOverlay.height=h;overlayLast=null;
+ }
+}
+function ghostStroke(p,start=false){
+ if(!strokeOverlayCtx||state.tool==='decal'||state.tool==='orbit')return;
+ fitStrokeOverlay();
+ const c=strokeOverlayCtx,scale=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);
+ const width=clamp(state.size*scale*2,2,90);
+ c.save();c.lineCap='round';c.lineJoin='round';
+ c.globalAlpha=state.tool==='spray'?.30:state.tool==='erase'?.38:.72;
+ c.strokeStyle=state.tool==='erase'?'#b6f4fc':state.color;
+ c.fillStyle=c.strokeStyle;c.lineWidth=width;
+ if(start||!overlayLast){c.beginPath();c.arc(p[0],p[1],width*.5,0,TAU);c.fill();}
+ else{c.beginPath();c.moveTo(overlayLast[0],overlayLast[1]);c.lineTo(p[0],p[1]);c.stroke();}
+ c.restore();overlayLast=p;
+}
+function clearGhostStroke(){
+ if(strokeOverlayCtx&&strokeOverlay.width)strokeOverlayCtx.clearRect(0,0,strokeOverlay.width,strokeOverlay.height);
+ overlayLast=null;
+}
 function pos(ev){let r=view.getBoundingClientRect();return [ev.clientX-r.left,ev.clientY-r.top];}
 function stampAt(posn){let hit=cast(...posn);if(!hit){status('Outside paintable skin');return null;}if(state.tool==='decal')stampDecal(hit);else dab(hit,state.size,{}) ;status(`${hit.uv[0].toFixed(3)}, ${hit.uv[1].toFixed(3)} UV · ${state.tool.toUpperCase()}`);return hit;}
 function beginStroke(ev){if(ev.button===2||ev.altKey||ev.shiftKey&&ev.button===1||state.tool==='orbit'||ev.buttons===4||ev.buttons===2){state.orbitActive=true;state.panActive=ev.buttons===4;view.setPointerCapture(ev.pointerId);state.move=pos(ev);view.style.cursor='grabbing';return;}
  if(ev.button!==0||!state.baseLoaded)return;const p=pos(ev),hit=cast(...p);if(!hit){message('Click on the painted fuselage or wings, not empty space.');return;}
- beginHistory('paint');view.setPointerCapture(ev.pointerId);state.pressed=true;state.strokeTravel=0;state.move=p;state.lastStamp=p;state.brushActive=true;stampAt(p);requestView();}
+ clearGhostStroke();beginHistory('paint');view.setPointerCapture(ev.pointerId);state.pressed=true;state.strokeTravel=0;state.move=p;state.lastStamp=p;state.brushActive=true;stampAt(p);ghostStroke(p,true);requestView();}
 function flushStrokePoint(){
  if(!pendingStrokePoint||!state.brushActive||!state.move)return;
  const p=pendingStrokePoint;pendingStrokePoint=null;
@@ -560,7 +608,7 @@ function moveStroke(ev){const p=pos(ev);state.mouse=p;const circle=$('cursorPrev
  const pxRadius=state.tool==='decal'?state.decalSize:state.size;const scale=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);const d=clamp(pxRadius*scale*2,6,260);circle.style.width=d+'px';circle.style.height=d+'px';
  if(state.orbitActive&&state.move){const dx=p[0]-state.move[0],dy=p[1]-state.move[1];if(state.panActive){cameraBasis();orbit.target=add(orbit.target,add(mul(orbit.right,-dx*orbit.dist*.0014),mul(orbit.up,dy*orbit.dist*.0014)));}else{orbit.yaw-=dx*.008;orbit.pitch=clamp(orbit.pitch+dy*.008,-1.55,1.55);}state.move=p;document.querySelectorAll('.camera-btn').forEach(b=>b.classList.remove('active'));requestView();return;}
  if(state.brushActive&&state.move){
-  if(state.tool!=='decal'){pendingStrokePoint=p;requestView();}
+  if(state.tool!=='decal'){ghostStroke(p);pendingStrokePoint=p;requestView();}
   return;
  }
  if(state.baseLoaded&&!state.pressed){const now=performance.now();if(now-lastStatusTime<70){if(state.tool==='decal')requestView();return;}lastStatusTime=now;let hit=cast(...p);if(hit)status('UV '+hit.uv.map(n=>n.toFixed(3)).join(' / ')+(state.tool==='decal'?' · DECAL PREVIEW · click to place':' · ready'));if(state.tool==='decal')requestView();}
@@ -647,7 +695,7 @@ function setupUI(){setupSwatches();setupStamps();
  view.addEventListener('wheel',e=>{e.preventDefault();orbit.dist=clamp(orbit.dist*Math.exp(e.deltaY*.001),4.5,60);requestView();},{passive:false});
  wrap.addEventListener('dragover',e=>{e.preventDefault();});wrap.addEventListener('drop',e=>{e.preventDefault();const f=e.dataTransfer?.files?.[0];if(f&&f.type.startsWith('image/'))loadImageFile(f,img=>{setDecalImage(img,f.name);document.querySelectorAll('.stamp').forEach(x=>x.classList.remove('active'));setTool('decal');message('Image loaded. Hover over the aircraft to preview.');});});
  window.addEventListener('keydown',e=>{if(e.key==='Escape'){if($('helpModal').classList.contains('show')){$('helpModal').classList.remove('show');}else if(state.tool==='decal'){setTool('orbit');message('Decal preview cancelled — no artwork placed.');}e.preventDefault();return;}if(e.target.matches('input,textarea,select'))return;let key=e.key.toLowerCase();if((e.ctrlKey||e.metaKey)&&key==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();return;}if((e.ctrlKey||e.metaKey)&&key==='y'){e.preventDefault();redo();return;}if(key==='b')setTool('brush');if(key==='d')setTool('decal');if(key==='e')setTool('erase');if(key==='o')setTool('orbit');});
- window.addEventListener('resize',requestView);
+ window.addEventListener('resize',()=>{fitStrokeOverlay();requestView();});
 }
 try{status('Loading F-16 geometry…');initGL();initMesh();setupUI();requestView();loadBase().then(()=>{state.loaded=true;status('F-16 READY · 68k textured triangles');message('F-16 loaded. Paint directly on the aircraft!');}).catch(e=>{console.error(e);status('Could not load base image: '+e.message);message('Texture missing — keep assets folder next to index.html');});}catch(e){console.error('SnowyStudio boot',e);status('Startup error: '+e.message);alert('SnowyStudio failed to start: '+e.message);}
 })();

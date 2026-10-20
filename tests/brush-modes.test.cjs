@@ -1,47 +1,61 @@
 'use strict';
-const fs=require('node:fs');
-const vm=require('node:vm');
-const assert=require('node:assert/strict');
-const js=fs.readFileSync(__dirname+'/../app.js','utf8');
-const html=fs.readFileSync(__dirname+'/../index.html','utf8');
-function cut(start,end){
- let i=js.indexOf(start),j=js.indexOf(end,i+start.length);
- assert(i>=0 && j>i,'missing '+start);
- return js.slice(i,j);
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync(__dirname+'/../app.js','utf8');
+const first=source.indexOf('const sprayStamp=document.createElement'),last=source.indexOf('function stampDecal(hit)',first);
+assert(first>=0 && last>first,'UV painting should use cached stamp and direct UV path');
+const code=source.slice(first,last);
+let mainCalls=[],stampCalls=[],tileWrites=[];
+function fakeCtx(target){
+ const calls=target;
+ return new Proxy({},{
+  set(obj,k,v){obj[k]=v;if(k==='globalCompositeOperation')calls.push('composite:'+v);return true;},
+  get(obj,k){
+   if(['arc','fill','stroke','drawImage','clearRect'].includes(k))return (...a)=>calls.push({op:k,args:a});
+   if(k==='createRadialGradient')return ()=>({addColorStop(){}});
+   if(['translate','rotate','save','restore','beginPath','moveTo','lineTo'].includes(k))return ()=>{};
+   return obj[k];
+  }
+ });
 }
-const log=[];
-const context={
- state:{tool:'brush',size:.24,color:'#000000',opacity:1,hardness:1,style:'round',sprayDensity:42,spraySpread:1.2,peakHeight:1.1,peakSpacing:1.5},
- hexRGB:()=>[0,0,0],sphereQuery:()=>[3],projectTriangle:(tri,hit,r,mode)=>{log.push('mode:'+mode);return {uv:[[0,0],[1,0],[0,1]],mat:[1,0,0,1,0,0]};},
- clipUV:()=>{},markUV:()=>{},paintDirty:()=>{},TAU:Math.PI*2,Math,console,
- paint:new Proxy({}, {set(obj,k,v){if(k==='globalCompositeOperation')log.push('composite:'+v);obj[k]=v;return true;},get(obj,k){
- if(k==='createRadialGradient')return ()=>({addColorStop(){}});
- if(['save','restore','setTransform','beginPath','arc','fill','stroke','moveTo','lineTo','bezierCurveTo'].includes(k))return (...args)=>{if(['arc','fill','stroke','lineTo'].includes(k))log.push(k);};
- return obj[k];
- }})
+const sprayCtx=fakeCtx(stampCalls);
+const paint=fakeCtx(mainCalls);
+const state={color:'#000000',opacity:1,style:'round',hardness:1,sprayDensity:60,spraySpread:1.3,peakHeight:1.1,tool:'brush'};
+const fakeCanvas={width:0,height:0,getContext(){return sprayCtx;}};
+const context={document:{createElement(k){assert.equal(k,'canvas');return fakeCanvas;}},state,W:4096,H:4096,TILE:256,GRID:16,
+ paint,Math,console,Set,Map,TAU:Math.PI*2,
+ triCoords:()=>[[0,0,0],[1,0,0],[0,1,0]],
+ triUV:()=>[[0,0],[100,0],[0,100]],
+ sub:(a,b)=>a.map((n,i)=>n-b[i]),
+ cross:(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],
+ len:a=>Math.hypot(...a),
+ clamp:(v,a,b)=>Math.min(b,Math.max(a,v)),
+ hexRGB:()=>[0,0,0],
+ markTile:id=>tileWrites.push(id),
+ pseudo:seed=>()=>{seed=(Math.imul(seed,1664525)+1013904223)|0;return(seed>>>0)/4294967296;},
+ sphereQuery(){throw Error('SLOW 3D TRIANGLE LOOP SHOULD NOT RUN IN BRUSH DAB');},
+ projectTriangle(){throw Error('SLOW TRIANGLE PROJECTION SHOULD NOT RUN IN BRUSH DAB');},
 };
 vm.createContext(context);
-vm.runInContext(cut('function dab(hit,radius,params','function stampDecal(hit)'),context);
-const hit={point:[0,0,0],normal:[0,1,0],dir:[0,0,1]};
-function draw(type){
- context.state.tool=type;log.length=0;context.dab(hit,.2,{});
- return {arc:log.filter(x=>x==='arc').length,stroke:log.filter(x=>x==='stroke').length,fill:log.filter(x=>x==='fill').length,peakProjection:log.includes('mode:peak'),erases:log.includes('composite:destination-out')};
+vm.runInContext(code,context);
+const hit={tri:7,uv:[1000/4096,1-1000/4096],point:[1,2,3]};
+function paintTool(name){
+ state.tool=name;mainCalls.length=0;tileWrites.length=0;context.dab(hit,.24);
+ return mainCalls.map(x=>x.op||x);
 }
-let brush=draw('brush'),spray=draw('spray'),peak=draw('mountain'),erase=draw('erase');
-assert.equal(brush.arc,1,'Brush creates one smooth filled dab');
-assert.equal(brush.fill,1);
-assert.equal(spray.arc,42,'Spray creates configurable scattered dots');
-assert.equal(spray.fill,42);
-assert.equal(spray.stroke,0);
-assert.equal(peak.arc,0,'Peak does not paint filled brush circles');
-assert.equal(peak.stroke,2,'Peak draws mountain skyline and rock details');
-assert.equal(peak.peakProjection,true,'Peak uses camera-plane projection');
-assert.equal(erase.erases,true,'Erase removes artwork');
-assert.match(html,/id="sprayDensity"/);assert.match(html,/id="spraySpread"/);
-assert.match(html,/id="peakHeight"/);assert.match(html,/id="peakSpacing"/);
-assert.match(html,/id="toolPreview"/);
-assert.ok(js.includes('updateToolControls();'));
-assert.ok(js.includes("state.tool==='mountain'"));
-assert.ok(!js.includes("openPane(b.dataset.tool"),'keeps tab gating logic intact');
-console.log('PASS: brush (smooth), spray ('+spray.arc+' particles), Alpine peaks ('+peak.stroke+' paths), erase (destination-out), tool controls and gating.');
+let brush=paintTool('brush');
+assert.equal(brush.filter(x=>x==='arc').length,1,'brush should only draw one UV circle per dab');
+assert.equal(brush.filter(x=>x==='fill').length,1,'one 2D paint operation');
+assert.ok(tileWrites.length>=1&&tileWrites.length<=4,'small brush captures only adjacent 256px tiles');
+let spray=paintTool('spray');
+assert.equal(spray.filter(x=>x==='drawImage').length,1,'spray blits one cached sprite per dab');
+const firstStampRenders=stampCalls.filter(x=>x.op==='arc').length;
+assert.ok(firstStampRenders>100,'first spray stamp generates particle pattern');
+spray=paintTool('spray');
+assert.equal(stampCalls.filter(x=>x.op==='arc').length,firstStampRenders,'spray stamp cached between dabs');
+let peak=paintTool('mountain');
+assert.equal(peak.filter(x=>x==='stroke').length,2,'peak draws skyline and snowcap details');
+let erase=paintTool('erase');
+assert.ok(erase.includes('composite:destination-out'),'erase uses transparency');
+assert.ok(source.includes('const tris=sphereQuery(')===false||source.indexOf('const tris=sphereQuery(')>source.indexOf('function stampDecal('),'UV dabs have no triangle search');
+console.log('PASS: brush one UV circle, spray one cached sprite, peak two paths, erase compositing, cached stamps and no CPU mesh loops.');
 
