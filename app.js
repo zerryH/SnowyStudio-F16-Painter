@@ -10,7 +10,7 @@ const V=(x,y,z)=>[x,y,z], sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],add=(a,b)=>
 const baseCanvas=document.createElement('canvas'),camCanvas=document.createElement('canvas'),paintCanvas=document.createElement('canvas'),outCanvas=document.createElement('canvas');
 for(const c of [baseCanvas,camCanvas,paintCanvas,outCanvas]){c.width=W;c.height=H;}
 const base=baseCanvas.getContext('2d',{willReadFrequently:true}), cam=camCanvas.getContext('2d'),paint=paintCanvas.getContext('2d'),out=outCanvas.getContext('2d',{willReadFrequently:true});
-const state={tool:'brush',style:'round',size:.24,opacity:1,hardness:1,color:'#101820',decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
+const state={tool:'brush',pane:'paint',lastPaintTool:'brush',style:'round',size:.24,opacity:1,hardness:1,color:'#101820',decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
 const orbit={yaw:.87,pitch:.37,dist:21,target:[.65,.15,0],pos:[0,0,0],right:[0,0,0],up:[0,1,0],forward:[0,0,-1]};
 let program,tex,decalTex,locations,meshes=[],skin=null,lastTexUpload=0,lastMini=0,toastTimer=0,raf=0,lastPointerRay=null,baseAlpha=null,modelTri=0;
 function message(msg){toast.textContent=msg;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),3300);}
@@ -209,7 +209,47 @@ const palette=['#101820','#000000','#273c4e','#6c8494','#ffffff','#d5f5fa','#a1d
 function setupSwatches(){const el=$('swatches');for(let c of palette){let b=document.createElement('button');b.className='swatch';b.style.background=c;b.title=c;b.addEventListener('click',()=>{state.color=c;$('colorPick').value=c;updateColors();});el.append(b);}updateColors();}
 function updateColors(){$('colorCode').textContent=state.color.toUpperCase();for(const e of document.querySelectorAll('.swatch'))e.classList.toggle('active',e.title.toLowerCase()===state.color.toLowerCase());}
 const styleTitles={brush:['Paintbrush','Draw directly on the aircraft in 3D.'],spray:['Spray / weathering','Soft speckles and handmade surface wear.'],mountain:['Mountain painter','One stroke stamps a line of Alpine peaks.'],decal:['Decal preview','Hover to inspect the decal before clicking to apply.'],erase:['Eraser','Remove artwork without erasing original detail.'],orbit:['Camera navigation','Drag to rotate the aircraft. No paint applied.']};
-function setTool(t){state.tool=t;for(let e of document.querySelectorAll('.rail-button[data-tool]'))e.classList.toggle('active',e.dataset.tool===t);$('toolHeading').textContent=styleTitles[t][0];$('toolSubtitle').textContent=styleTitles[t][1];$('brushHUD').textContent=(t==='decal'?'DECAL · '+state.decalSize.toFixed(2):t.toUpperCase()+' · '+state.size.toFixed(2))+' m';view.style.cursor=t==='orbit'?'grab':t==='decal'?'crosshair':'crosshair';state.previewHit=null;requestView();}
+// The selected sidebar page and the active painting tool are one coordinated UI state.
+const paintTools=new Set(['brush','spray','mountain','erase']);
+const validPanes=new Set(['paint','decals','camo','layers']);
+function setPane(name){
+ if(!validPanes.has(name))return;
+ state.pane=name;
+ for(const e of document.querySelectorAll('.panel.left > .section[data-pane]')){
+  const active=e.dataset.pane===name;
+  e.classList.toggle('pane-active',active);
+  e.hidden=!active;
+  e.setAttribute('aria-hidden',String(!active));
+ }
+ for(const e of document.querySelectorAll('.sidebar-tab')){
+  const active=e.dataset.paneTarget===name;
+  e.classList.toggle('active',active);
+  e.setAttribute('aria-selected',String(active));
+  e.tabIndex=active?0:-1;
+ }
+ const headline=name==='camo'?['Camouflage','Apply a preset without accidentally painting.']:
+  name==='layers'?['Layers','Show or hide the artwork and camouflage layers.']:
+  styleTitles[state.tool]||styleTitles.brush;
+ $('toolHeading').textContent=headline[0];
+ $('toolSubtitle').textContent=headline[1];
+}
+function setTool(t,requestedPane=null){
+ if(!styleTitles[t])return;
+ state.tool=t;
+ if(paintTools.has(t))state.lastPaintTool=t;
+ const pane=requestedPane||(t==='decal'?'decals':paintTools.has(t)?'paint':state.pane);
+ for(const e of document.querySelectorAll('.rail-button[data-tool]')){
+  const active=e.dataset.tool===t;
+  e.classList.toggle('active',active);
+  e.setAttribute('aria-pressed',String(active));
+ }
+ $('brushHUD').textContent=(t==='decal'?'DECAL · '+state.decalSize.toFixed(2):t.toUpperCase()+' · '+state.size.toFixed(2))+' m';
+ view.style.cursor=t==='orbit'?'grab':'crosshair';
+ state.previewHit=null;
+ state.previewInside=false;
+ setPane(pane);
+ requestView();
+}
 function setCamera(k){if(k==='iso'){orbit.yaw=.87;orbit.pitch=.37;orbit.dist=21;}if(k==='top'){orbit.yaw=0;orbit.pitch=1.51;}if(k==='bottom'){orbit.yaw=0;orbit.pitch=-1.51;}if(k==='right'){orbit.yaw=0;orbit.pitch=.03;}if(k==='left'){orbit.yaw=Math.PI;orbit.pitch=.03;}if(k==='front'){orbit.yaw=Math.PI/2;orbit.pitch=.015;}for(let e of document.querySelectorAll('[data-camera]'))e.classList.toggle('active',e.dataset.camera===k);requestView();}
 function selectCamo(name){pushUndo();state.camo=name;renderCamo();document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x.dataset.camo===name));paintDirty();message(name==='none'?'Camouflage removed':name[0].toUpperCase()+name.slice(1)+' camouflage applied');}
 function pseudo(seed){let s=seed|0;return()=>{s=(Math.imul(s,1664525)+1013904223)|0;return(s>>>0)/4294967296;};}
@@ -285,15 +325,19 @@ async function exportSkin(){if(!state.baseLoaded)return;const b=$('busyModal');b
 async function saveProject(){if(!state.baseLoaded)return;const obj={format:'snowystudio-project',version:1,created:new Date().toISOString(),aircraft:'f_16a_block_20_mlu',settings:{camo:state.camo,camoStrength:state.camoStrength},base:baseCanvas.toDataURL('image/png'),camo:camCanvas.toDataURL('image/png'),paint:paintCanvas.toDataURL('image/png')};makeDownload(latinBytes(JSON.stringify(obj)),'SnowyStudio_F16_MLU.snowyproject.json','application/json');message('Project saved with editable artwork layers');}
 async function openProject(f){if(!f)return;try{const obj=JSON.parse(await f.text());if(obj.format!=='snowystudio-project'||obj.aircraft!=='f_16a_block_20_mlu')throw Error('Not an F-16 SnowyStudio project');const images=await Promise.all([imageFrom(obj.base),imageFrom(obj.camo),imageFrom(obj.paint)]);base.clearRect(0,0,W,H);cam.clearRect(0,0,W,H);paint.clearRect(0,0,W,H);base.drawImage(images[0],0,0,W,H);cam.drawImage(images[1],0,0,W,H);paint.drawImage(images[2],0,0,W,H);state.camo=obj.settings?.camo||'none';state.camoStrength=obj.settings?.camoStrength||.78;state.undo=[];state.redo=[];updateUndo();document.querySelectorAll('.preset').forEach(x=>x.classList.toggle('active',x.dataset.camo===state.camo));paintDirty();message('Project loaded successfully');}catch(e){message('Could not load project: '+e.message);}}
 function setupUI(){setupSwatches();setupStamps();
- const openPane=(name)=>{for(const e of document.querySelectorAll('.panel.left>.section[data-pane]'))e.classList.toggle('pane-active',e.dataset.pane===name);for(const e of document.querySelectorAll('.sidebar-tab')){const on=e.dataset.paneTarget===name;e.classList.toggle('active',on);e.setAttribute('aria-selected',String(on));}};
- for(const e of document.querySelectorAll('.sidebar-tab'))e.addEventListener('click',()=>openPane(e.dataset.paneTarget));
+ for(const e of document.querySelectorAll('.sidebar-tab'))e.addEventListener('click',()=>{
+  const pane=e.dataset.paneTarget;
+  if(pane==='paint')setTool(state.lastPaintTool||'brush');
+  else if(pane==='decals')setTool('decal');
+  else setTool('orbit',pane); // Camo / Layers must never paint during navigation.
+ });
  const drawer=$('uvDrawer');const toggleUV=(open)=>{drawer.classList.toggle('is-open',open);$('uvToggle').setAttribute('aria-expanded',String(open));};
  $('uvToggle').addEventListener('click',()=>toggleUV(!drawer.classList.contains('is-open')));
  $('uvClose').addEventListener('click',()=>toggleUV(false));
  $('zoomIn').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*.78,4.5,60);requestView();});
  $('zoomOut').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*1.28,4.5,60);requestView();});
  $('fitView').addEventListener('click',()=>setCamera('iso'));
- for(const b of document.querySelectorAll('.rail-button[data-tool]'))b.addEventListener('click',()=>{setTool(b.dataset.tool);openPane(b.dataset.tool==='decal'?'decals':'paint');});
+ for(const b of document.querySelectorAll('.rail-button[data-tool]'))b.addEventListener('click',()=>setTool(b.dataset.tool));
  for(const b of document.querySelectorAll('.segbtn'))b.addEventListener('click',()=>{state.style=b.dataset.style;document.querySelectorAll('.segbtn').forEach(x=>x.classList.toggle('active',x===b));});
  function bindRange(id,prop,outid,render){let input=$(id),output=$(outid);input.addEventListener('input',()=>{state[prop]=+input.value*(prop==='opacity'||prop==='hardness'||prop==='camoStrength'?.01:1);output.textContent=prop==='size'||prop==='decalSize'?state[prop].toFixed(2)+' m':prop==='decalRotate'?state[prop]+'°':Math.round(state[prop]*100)+'%';if(render)render();if(state.tool==='decal')requestView();$('brushHUD').textContent=(state.tool==='decal'?'DECAL · '+state.decalSize.toFixed(2):state.tool.toUpperCase()+' · '+state.size.toFixed(2))+' m';});}
  bindRange('brushSize','size','sizeOut');bindRange('opacity','opacity','opacityOut');bindRange('hardness','hardness','hardnessOut');bindRange('decalSize','decalSize','decalSizeOut');bindRange('decalRotate','decalRotate','decalRotateOut');
