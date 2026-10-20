@@ -96,6 +96,12 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
 @media(max-width:800px){:root{--tool-w:255px;--rail-w:54px}.workspace{grid-template-columns:var(--rail-w) var(--tool-w) minmax(0,1fr)}.viewbar{top:58px;left:12px;right:12px;justify-content:center}.viewtop{top:10px;left:10px}.camera-btn{padding:6px 7px}.topbar{gap:7px;padding:0 8px}.brand{min-width:auto}.brand-sub,.topinfo,.sep{display:none}.topright .btn:not(.primary):not(.icon){display:none}.topright .btn.primary{font-size:10px;padding:8px 9px}.v-bottom .assist{max-width:75%}}
 @media(max-width:600px){:root{--tool-w:210px;--rail-w:45px}.rail{padding:10px 2px}.rail-button{width:40px}.sidebar-tab{font-size:9px}.v-bottom .assist{display:none}.viewstat{max-width:75%;overflow:hidden;text-overflow:ellipsis}}
 
+.current-mode{margin-bottom:18px;padding:12px;border:1px solid #37697b;background:linear-gradient(160deg,#1b3444,#12212f);border-radius:11px}
+.mode-eyebrow{color:#82c9d9;font-weight:850;font-size:9px;letter-spacing:1.5px;margin-bottom:5px}
+.current-mode strong{font-size:14px;color:#e0f8ff}
+.current-mode p{font-size:10.5px;color:#b2c9d4;line-height:1.5;margin:5px 0 10px}
+#toolPreview{display:block;width:100%;height:80px;border-radius:7px;border:1px solid #486777;background:#daeaf0}
+.tool-config{margin:12px 0}.tool-config[hidden],[data-tool-config][hidden]{display:none!important}
 </style></head>
 <body>
 <div class="app">
@@ -118,10 +124,24 @@ button,select,input{font:inherit}button{cursor:pointer;color:inherit}button:disa
 <aside class="panel left">
  <div class="panel-heading"><div class="eyebrow">Creative workspace</div><h2 id="toolHeading">Paintbrush</h2><div class="small-muted" id="toolSubtitle">Draw directly on the aircraft in 3D.</div></div>
  <div class="sidebar-tabs" role="tablist" aria-label="Editor controls"><button class="sidebar-tab active" role="tab" aria-controls="paintPane" data-pane-target="paint">Paint</button><button class="sidebar-tab" role="tab" aria-controls="decalsPane" data-pane-target="decals">Decals</button><button class="sidebar-tab" role="tab" aria-controls="camoPane" data-pane-target="camo">Camo</button><button class="sidebar-tab" role="tab" aria-controls="layersPane" data-pane-target="layers">Layers</button></div>
- <div id="paintPane" role="tabpanel" class="section pane-active" data-pane="paint"><div class="section-title">Brush style</div><div class="segment" id="brushType"><button class="segbtn active" data-style="round">Solid</button><button class="segbtn" data-style="soft">Soft</button><button class="segbtn" data-style="chalk">Rough ink</button></div>
+ <div id="paintPane" role="tabpanel" class="section pane-active" data-pane="paint">
+ <div class="current-mode"><div class="mode-eyebrow">ACTIVE TOOL</div><strong id="activeToolName">Solid brush</strong><p id="activeToolHelp">Continuous, clean lines</p><canvas id="toolPreview" width="280" height="92" aria-label="Brush stroke preview"></canvas></div>
+ <div class="tool-config" data-tool-config="brush"><div class="section-title">Brush tip style</div><div class="segment" id="brushType"><button class="segbtn active" data-style="round">Solid</button><button class="segbtn" data-style="soft">Soft</button><button class="segbtn" data-style="chalk">Rough ink</button></div></div>
  <div class="stack-gap"><div class="field"><label for="brushSize">Brush size</label><output id="sizeOut">0.24 m</output></div><input class="range" id="brushSize" type="range" min="0.03" max="1.8" step="0.01" value="0.24"></div>
  <div class="field"><label for="opacity">Opacity</label><output id="opacityOut">100%</output></div><input class="range" id="opacity" type="range" min="5" max="100" value="100">
- <div class="field"><label for="hardness">Edge hardness</label><output id="hardnessOut">100%</output></div><input class="range" id="hardness" type="range" min="5" max="100" value="100">
+ <div data-tool-config="brush erase"><div class="field"><label for="hardness">Edge hardness</label><output id="hardnessOut">100%</output></div><input class="range" id="hardness" type="range" min="5" max="100" value="100"></div>
+ <div class="tool-config" data-tool-config="spray" hidden>
+  <div class="section-title">Spray nozzle <span class="subtle">Airbrush</span></div>
+  <div class="field"><label for="sprayDensity">Particle density</label><output id="sprayDensityOut">68 dots</output></div><input class="range" id="sprayDensity" type="range" min="12" max="140" value="68" step="4">
+  <div class="field"><label for="spraySpread">Spray spread</label><output id="spraySpreadOut">1.45×</output></div><input class="range" id="spraySpread" type="range" min=".65" max="2.5" value="1.45" step=".05">
+  <div class="tool-hint">Particles scatter instead of forming a solid line. More density means stronger paint buildup.</div>
+ </div>
+ <div class="tool-config" data-tool-config="mountain" hidden>
+  <div class="section-title">Alpine brush <span class="subtle">Linework</span></div>
+  <div class="field"><label for="peakHeight">Peak height</label><output id="peakHeightOut">1.10×</output></div><input class="range" id="peakHeight" type="range" min=".5" max="2" value="1.1" step=".05">
+  <div class="field"><label for="peakSpacing">Peak spacing</label><output id="peakSpacingOut">1.50×</output></div><input class="range" id="peakSpacing" type="range" min=".75" max="3" value="1.5" step=".05">
+  <div class="tool-hint">Drag to stamp separate hand-drawn mountain groups. Increase spacing for isolated peaks.</div>
+ </div>
  <div class="section-title">Paint color</div><div class="color-row"><input id="colorPick" class="colorpick" type="color" value="#101820"><span class="colorcode" id="colorCode">#101820</span><span class="small-muted">Solid RGB</span></div>
  <div class="swatches" id="swatches"></div></div>
  <div id="decalsPane" role="tabpanel" class="section" data-pane="decals"><div class="section-title">Custom graphics <span class="subtle">Live decal preview</span></div><div class="stamps" id="stampGrid"></div><div style="height:11px"></div><label class="upload-zone" for="decalInput"><strong>＋ Upload PNG / image</strong><small>Transparent PNG works best · Paste directly onto the 3D model</small></label><input id="decalInput" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" class="hidden">

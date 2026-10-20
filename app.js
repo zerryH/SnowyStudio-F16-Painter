@@ -10,7 +10,7 @@ const V=(x,y,z)=>[x,y,z], sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],add=(a,b)=>
 const baseCanvas=document.createElement('canvas'),camCanvas=document.createElement('canvas'),paintCanvas=document.createElement('canvas'),outCanvas=document.createElement('canvas');
 for(const c of [baseCanvas,camCanvas,paintCanvas,outCanvas]){c.width=W;c.height=H;}
 const base=baseCanvas.getContext('2d',{willReadFrequently:true}), cam=camCanvas.getContext('2d'),paint=paintCanvas.getContext('2d'),out=outCanvas.getContext('2d',{willReadFrequently:true});
-const state={tool:'brush',pane:'paint',lastPaintTool:'brush',style:'round',size:.24,opacity:1,hardness:1,color:'#101820',decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
+const state={tool:'brush',pane:'paint',lastPaintTool:'brush',style:'round',size:.24,opacity:1,hardness:1,sprayDensity:68,spraySpread:1.45,peakHeight:1.1,peakSpacing:1.5,color:'#101820',decalSize:1.4,decalRotate:0,camo:'none',camoStrength:.78,showPaint:true,showCamo:true,stamp:'alpine',image:null,mouse:[-100,-100],brushActive:false,strokeTravel:0,orbitActive:false,panActive:false,undo:[],redo:[],loaded:false,dirtyTex:true,needsRender:true,needMini:true,move:null,pressed:false,lastStamp:null,lastDecal:null,baseLoaded:false,previewHit:null,previewInside:false};
 const orbit={yaw:.87,pitch:.37,dist:21,target:[.65,.15,0],pos:[0,0,0],right:[0,0,0],up:[0,1,0],forward:[0,0,-1]};
 let program,tex,decalTex,locations,meshes=[],skin=null,lastTexUpload=0,lastMini=0,toastTimer=0,raf=0,lastPointerRay=null,baseAlpha=null,modelTri=0;
 function message(msg){toast.textContent=msg;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),3300);}
@@ -168,7 +168,7 @@ function projectTriangle(tri,hit,size,mode){const p=triCoords(tri),uv=triUV(tri)
  const my=[(uv[2][0]-uv[0][0]-mx[0]*x2)/y2,(uv[2][1]-uv[0][1]-mx[1]*x2)/y2];
  const d=sub(hit.point,p[0]),cx=uv[0][0]+mx[0]*dot(d,axisX)+my[0]*dot(d,axisY),cy=uv[0][1]+mx[1]*dot(d,axisX)+my[1]*dot(d,axisY);
  if(!Number.isFinite(cx)||Math.max(Math.abs(mx[0]),Math.abs(my[0]))>3e5)return null;
- if(mode==='decal'){
+ if(mode==='decal'||mode==='peak'){
   const coords=p.map(pt=>[dot(sub(pt,hit.point),orbit.right),-dot(sub(pt,hit.point),orbit.up)]);
   const dx1=coords[1][0]-coords[0][0],dy1=coords[1][1]-coords[0][1],dx2=coords[2][0]-coords[0][0],dy2=coords[2][1]-coords[0][1],det=dx1*dy2-dy1*dx2;
   if(Math.abs(det)<.000005)return null;
@@ -183,20 +183,66 @@ function projectTriangle(tri,hit,size,mode){const p=triCoords(tri),uv=triUV(tri)
  return {uv,mat:[mx[0],mx[1],my[0],my[1],cx,cy]};
 }
 function clipUV(ctx,uv){ctx.beginPath();ctx.moveTo(uv[0][0],uv[0][1]);ctx.lineTo(uv[1][0],uv[1][1]);ctx.lineTo(uv[2][0],uv[2][1]);ctx.closePath();ctx.clip();}
-function dab(hit,radius,params){if(!hit)return;const tris=sphereQuery(hit.point,radius*1.4+.04);const [R,G,B]=hexRGB(state.color);let count=0;
- for(const tri of tris){const m=projectTriangle(tri,hit,radius,'brush');if(!m)continue;paint.save();clipUV(paint,m.uv);paint.setTransform(...m.mat);paint.globalAlpha=state.opacity;paint.globalCompositeOperation=state.tool==='erase'?'destination-out':'source-over';
- if(state.tool==='mountain'){
-  paint.strokeStyle=state.color;paint.lineWidth=radius*.085;paint.lineCap='round';paint.lineJoin='round';paint.beginPath();paint.moveTo(-radius, radius*.25);paint.lineTo(-radius*.72,-radius*.30);paint.lineTo(-radius*.54,-radius*.05);paint.lineTo(-radius*.25,-radius*.9);paint.lineTo(radius*.02,-radius*.16);paint.lineTo(radius*.19,-radius*.40);paint.lineTo(radius*.49,-radius*.04);paint.lineTo(radius*.69,-radius*.46);paint.lineTo(radius,radius*.29);paint.stroke();paint.lineWidth=radius*.025;paint.beginPath();paint.moveTo(-radius*.39,-radius*.45);paint.lineTo(-radius*.24,-radius*.30);paint.lineTo(-radius*.13,-radius*.46);paint.moveTo(radius*.60,-radius*.29);paint.lineTo(radius*.71,-radius*.20);paint.stroke();
- }else if(state.tool==='spray'||state.style==='chalk'){
-  const r=radius*(state.tool==='spray'?1:0.88),seed=tri*17+(hit.point[0]*345|0),rand=s=>{let n=Math.sin(s*12.9898+seed*78.233)*43758.5453;return n-Math.floor(n)};
-  const N=state.tool==='spray'?54:60;paint.fillStyle=state.color;for(let j=0;j<N;j++){const a=rand(j+11)*TAU,d=Math.sqrt(rand(j+409))*r,x=Math.cos(a)*d,y=Math.sin(a)*d;paint.beginPath();paint.arc(x,y,r*(state.tool==='spray'?.018:.024)*(0.5+rand(j+3)),0,TAU);paint.fill();}
- }else{
-  paint.fillStyle=state.color;if(state.style==='soft'&&state.tool!=='erase'||state.hardness<.98&&state.tool!=='erase'){
-   const grad=paint.createRadialGradient(0,0,radius*state.hardness*.75,0,0,radius);grad.addColorStop(0,state.color);grad.addColorStop(1,`rgba(${R},${G},${B},0)`);paint.fillStyle=grad;
+
+// Brush is a continuous filled mark. Spray is particulate. Peak is a spaced, detailed skyline.
+function dab(hit,radius,params={}){
+ if(!hit)return 0;
+ const t=state.tool,peak=t==='mountain',spray=t==='spray',erase=t==='erase';
+ const reach=radius*(spray?state.spraySpread:1);
+ const tris=sphereQuery(hit.point,reach*1.6+.04);
+ const rgb=hexRGB(state.color);let count=0;
+ for(const tri of tris){
+  const m=projectTriangle(tri,hit,reach,peak?'peak':'brush');
+  if(!m)continue;
+  paint.save();clipUV(paint,m.uv);paint.setTransform(...m.mat);
+  paint.globalAlpha=state.opacity;
+  paint.globalCompositeOperation=erase?'destination-out':'source-over';
+  if(peak){
+   const h=state.peakHeight;
+   paint.strokeStyle=state.color;paint.lineWidth=radius*.072;
+   paint.lineCap='round';paint.lineJoin='round';paint.beginPath();
+   paint.moveTo(-radius,radius*.35);
+   paint.lineTo(-radius*.79,-radius*.12*h);
+   paint.lineTo(-radius*.60,radius*.10);
+   paint.lineTo(-radius*.28,-radius*.96*h);
+   paint.lineTo(radius*.03,radius*.08);
+   paint.lineTo(radius*.24,-radius*.47*h);
+   paint.lineTo(radius*.41,-radius*.06);
+   paint.lineTo(radius*.65,-radius*.67*h);
+   paint.lineTo(radius*.86,radius*.06);
+   paint.lineTo(radius,radius*.32);paint.stroke();
+   paint.lineWidth=radius*.027;paint.beginPath();
+   paint.moveTo(-radius*.43,-radius*.49*h);
+   paint.lineTo(-radius*.28,-radius*.34*h);
+   paint.lineTo(-radius*.12,-radius*.51*h);
+   paint.moveTo(radius*.56,-radius*.38*h);
+   paint.lineTo(radius*.66,-radius*.29*h);
+   paint.lineTo(radius*.73,-radius*.38*h);
+   paint.stroke();
+  }else if(spray||(state.style==='chalk'&&!erase)){
+   const r=radius*(spray?state.spraySpread:.90);
+   const seed=tri*37+Math.floor(hit.point[0]*719)*53+Math.floor(hit.point[1]*543)*23;
+   const rand=k=>{const n=Math.sin(k*12.9898+seed*78.233)*43758.5453;return n-Math.floor(n);};
+   const N=spray?Math.round(state.sprayDensity):58;
+   paint.fillStyle=state.color;
+   for(let j=0;j<N;j++){
+    const angle=rand(j+5)*TAU,distance=Math.sqrt(rand(j+997))*r;
+    const x=Math.cos(angle)*distance,y=Math.sin(angle)*distance;
+    const dotRadius=r*(spray?.013:.025)*(.3+rand(j+225));
+    paint.globalAlpha=state.opacity*(spray?.22+.68*(1-distance/r):.7);
+    paint.beginPath();paint.arc(x,y,dotRadius,0,TAU);paint.fill();
+   }
+  }else{
+   paint.fillStyle=state.color;
+   if(!erase&&(state.style==='soft'||state.hardness<.98)){
+    const grad=paint.createRadialGradient(0,0,radius*state.hardness*.75,0,0,radius);
+    grad.addColorStop(0,state.color);
+    grad.addColorStop(1,'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0)');
+    paint.fillStyle=grad;
+   }
+   paint.beginPath();paint.arc(0,0,radius,0,TAU);paint.fill();
   }
-  paint.beginPath();paint.arc(0,0,radius,0,TAU);paint.fill();
- }
- paint.restore();count++;
+  paint.restore();count++;
  }
  if(count)paintDirty();return count;
 }
@@ -206,9 +252,9 @@ function stampDecal(hit){if(!hit||!state.image)return;const size=state.decalSize
  paint.drawImage(state.image,-size/2,-size*ratio/2,size,size*ratio);paint.restore();count++;
  }if(count)paintDirty();else message('Decal missed the paintable surface; try a flatter view.');}
 const palette=['#101820','#000000','#273c4e','#6c8494','#ffffff','#d5f5fa','#a1dee7','#6a9ac1','#194f69','#d8ded6','#c6b3a1','#9b7160','#ec6d51','#f4ca63','#9b9dd4','#8bcbb3'];
-function setupSwatches(){const el=$('swatches');for(let c of palette){let b=document.createElement('button');b.className='swatch';b.style.background=c;b.title=c;b.addEventListener('click',()=>{state.color=c;$('colorPick').value=c;updateColors();});el.append(b);}updateColors();}
+function setupSwatches(){const el=$('swatches');for(let c of palette){let b=document.createElement('button');b.className='swatch';b.style.background=c;b.title=c;b.addEventListener('click',()=>{state.color=c;$('colorPick').value=c;updateColors();drawToolPreview();});el.append(b);}updateColors();}
 function updateColors(){$('colorCode').textContent=state.color.toUpperCase();for(const e of document.querySelectorAll('.swatch'))e.classList.toggle('active',e.title.toLowerCase()===state.color.toLowerCase());}
-const styleTitles={brush:['Paintbrush','Draw directly on the aircraft in 3D.'],spray:['Spray / weathering','Soft speckles and handmade surface wear.'],mountain:['Mountain painter','One stroke stamps a line of Alpine peaks.'],decal:['Decal preview','Hover to inspect the decal before clicking to apply.'],erase:['Eraser','Remove artwork without erasing original detail.'],orbit:['Camera navigation','Drag to rotate the aircraft. No paint applied.']};
+const styleTitles={brush:['Solid brush','Draw smooth, continuous lines.'],spray:['Spray paint','Scattered dots for fades and weathering.'],mountain:['Alpine peaks','Place spaced mountain ranges with snowcaps.'],decal:['Decal preview','Hover to inspect the decal before clicking to apply.'],erase:['Eraser','Remove artwork without erasing original detail.'],orbit:['Camera navigation','Drag to rotate the aircraft. No paint applied.']};
 // The selected sidebar page and the active painting tool are one coordinated UI state.
 const paintTools=new Set(['brush','spray','mountain','erase']);
 const validPanes=new Set(['paint','decals','camo','layers']);
@@ -233,6 +279,51 @@ function setPane(name){
  $('toolHeading').textContent=headline[0];
  $('toolSubtitle').textContent=headline[1];
 }
+
+function drawToolPreview(){
+ const c=$('toolPreview');if(!c)return;
+ const g=c.getContext('2d'),w=c.width,h=c.height,ink=state.color;
+ const rgb=hexRGB(ink),brightness=rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;
+ g.clearRect(0,0,w,h);g.fillStyle=brightness<155?'#dceef4':'#152738';g.fillRect(0,0,w,h);
+ g.strokeStyle=ink;g.fillStyle=ink;g.lineCap='round';g.lineJoin='round';
+ if(state.tool==='spray'){
+  const rand=pseudo(44213);
+  for(let i=0;i<Math.round(state.sprayDensity*3);i++){
+   const x=20+rand()*(w-40),y=h/2+(rand()-.5)*26*state.spraySpread;
+   g.globalAlpha=.20+rand()*.75;
+   g.beginPath();g.arc(x,y,.6+rand()*1.6,0,TAU);g.fill();
+  }
+ }else if(state.tool==='mountain'){
+  g.lineWidth=2.8;
+  const height=state.peakHeight*18;
+  for(let j=0;j<3;j++){
+   const x=8+j*90;
+   g.beginPath();g.moveTo(x,h*.75);g.lineTo(x+19,h*.49);
+   g.lineTo(x+32,h*.49-height);
+   g.lineTo(x+51,h*.49);
+   g.lineTo(x+66,h*.51-height*.53);
+   g.lineTo(x+83,h*.75);g.stroke();
+  }
+ }else{
+  g.lineWidth=state.tool==='erase'?19:16;
+  if(state.tool==='erase')g.setLineDash([9,6]);
+  g.beginPath();g.moveTo(20,h*.74);
+  g.bezierCurveTo(72,0,115,h,163,h*.45);
+  g.bezierCurveTo(210,0,239,h*.65,w-18,h*.31);g.stroke();
+  g.setLineDash([]);
+ }
+ g.globalAlpha=1;
+}
+function updateToolControls(){
+ const t=state.tool;
+ for(const e of document.querySelectorAll('[data-tool-config]'))
+  e.hidden=!e.dataset.toolConfig.split(' ').includes(t);
+ const titles={brush:'Solid brush',spray:'Spray paint',mountain:'Alpine peaks',erase:'Eraser',orbit:'Orbit camera',decal:'Image decal'};
+ const desc={brush:'Continuous, clean lines',spray:'Scattered particles; adjust density and spread',mountain:'Separated peaks; adjust height and spacing',erase:'Remove only your painted artwork',orbit:'Rotate the aircraft without painting',decal:'Preview, then click to place images'};
+ if($('activeToolName'))$('activeToolName').textContent=titles[t]||t;
+ if($('activeToolHelp'))$('activeToolHelp').textContent=desc[t]||'';
+ drawToolPreview();
+}
 function setTool(t,requestedPane=null){
  if(!styleTitles[t])return;
  state.tool=t;
@@ -247,6 +338,7 @@ function setTool(t,requestedPane=null){
  view.style.cursor=t==='orbit'?'grab':'crosshair';
  state.previewHit=null;
  state.previewInside=false;
+ updateToolControls();
  setPane(pane);
  requestView();
 }
@@ -279,11 +371,26 @@ function pos(ev){let r=view.getBoundingClientRect();return [ev.clientX-r.left,ev
 function stampAt(posn){let hit=cast(...posn);if(!hit){status('Outside paintable skin');return null;}if(state.tool==='decal')stampDecal(hit);else dab(hit,state.size,{}) ;status(`${hit.uv[0].toFixed(3)}, ${hit.uv[1].toFixed(3)} UV · ${state.tool.toUpperCase()}`);return hit;}
 function beginStroke(ev){if(ev.button===2||ev.altKey||ev.shiftKey&&ev.button===1||state.tool==='orbit'||ev.buttons===4||ev.buttons===2){state.orbitActive=true;state.panActive=ev.buttons===4;view.setPointerCapture(ev.pointerId);state.move=pos(ev);view.style.cursor='grabbing';return;}
  if(ev.button!==0||!state.baseLoaded)return;const p=pos(ev),hit=cast(...p);if(!hit){message('Click on the painted fuselage or wings, not empty space.');return;}
- pushUndo();view.setPointerCapture(ev.pointerId);state.pressed=true;state.move=p;state.lastStamp=p;state.brushActive=true;stampAt(p);requestView();}
+ pushUndo();view.setPointerCapture(ev.pointerId);state.pressed=true;state.strokeTravel=0;state.move=p;state.lastStamp=p;state.brushActive=true;stampAt(p);requestView();}
 function moveStroke(ev){const p=pos(ev);state.mouse=p;const circle=$('cursorPreview');circle.style.left=p[0]+'px';circle.style.top=p[1]+'px';circle.style.display=ev.pointerType==='touch'||state.tool==='decal'||state.tool==='orbit'?'none':'block';state.previewInside=true;
  const pxRadius=state.tool==='decal'?state.decalSize:state.size;const scale=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);const d=clamp(pxRadius*scale*2,6,260);circle.style.width=d+'px';circle.style.height=d+'px';
  if(state.orbitActive&&state.move){const dx=p[0]-state.move[0],dy=p[1]-state.move[1];if(state.panActive){cameraBasis();orbit.target=add(orbit.target,add(mul(orbit.right,-dx*orbit.dist*.0014),mul(orbit.up,dy*orbit.dist*.0014)));}else{orbit.yaw-=dx*.008;orbit.pitch=clamp(orbit.pitch+dy*.008,-1.55,1.55);}state.move=p;document.querySelectorAll('.camera-btn').forEach(b=>b.classList.remove('active'));requestView();return;}
- if(state.brushActive&&state.move){if(state.tool==='decal'){return;}const old=state.move;const dx=p[0]-old[0],dy=p[1]-old[1],distance=Math.hypot(dx,dy);const pxUnit=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);const step=clamp(state.size*pxUnit*.34,3,17),n=Math.min(30,Math.ceil(distance/step));for(let i=1;i<=n;i++)stampAt([old[0]+dx*i/n,old[1]+dy*i/n]);state.move=p;requestView();return;}
+ if(state.brushActive&&state.move){if(state.tool==='decal'){return;}const old=state.move;const dx=p[0]-old[0],dy=p[1]-old[1],distance=Math.hypot(dx,dy);const pxUnit=wrap.clientHeight/(2*Math.tan(Math.PI/6)*orbit.dist);if(state.tool==='mountain'){
+  const step=Math.max(8,state.size*pxUnit*state.peakSpacing*2);
+  let next=step-state.strokeTravel;
+  let count=0;
+  while(next<=distance&&count<35){
+   let ratio=next/distance;
+   stampAt([old[0]+dx*ratio,old[1]+dy*ratio]);
+   next+=step;count++;
+  }
+  state.strokeTravel=(state.strokeTravel+distance)%step;
+ }else{
+  const step=clamp(state.size*pxUnit*(state.tool==='spray'?.25:.31),2.5,15);
+  const n=Math.min(35,Math.max(1,Math.ceil(distance/step)));
+  for(let i=1;i<=n;i++)stampAt([old[0]+dx*i/n,old[1]+dy*i/n]);
+ }
+ state.move=p;requestView();return;}
  if(state.baseLoaded&&!state.pressed){let hit=cast(...p);if(hit)status('UV '+hit.uv.map(n=>n.toFixed(3)).join(' / ')+(state.tool==='decal'?' · DECAL PREVIEW · click to place':' · ready'));if(state.tool==='decal')requestView();}
 }
 function endStroke(ev){if(state.orbitActive){state.orbitActive=false;view.style.cursor=state.tool==='orbit'?'grab':'crosshair';}if(state.brushActive){state.brushActive=false;state.pressed=false;paintDirty();}state.move=null;}
@@ -338,11 +445,15 @@ function setupUI(){setupSwatches();setupStamps();
  $('zoomOut').addEventListener('click',()=>{orbit.dist=clamp(orbit.dist*1.28,4.5,60);requestView();});
  $('fitView').addEventListener('click',()=>setCamera('iso'));
  for(const b of document.querySelectorAll('.rail-button[data-tool]'))b.addEventListener('click',()=>setTool(b.dataset.tool));
- for(const b of document.querySelectorAll('.segbtn'))b.addEventListener('click',()=>{state.style=b.dataset.style;document.querySelectorAll('.segbtn').forEach(x=>x.classList.toggle('active',x===b));});
- function bindRange(id,prop,outid,render){let input=$(id),output=$(outid);input.addEventListener('input',()=>{state[prop]=+input.value*(prop==='opacity'||prop==='hardness'||prop==='camoStrength'?.01:1);output.textContent=prop==='size'||prop==='decalSize'?state[prop].toFixed(2)+' m':prop==='decalRotate'?state[prop]+'°':Math.round(state[prop]*100)+'%';if(render)render();if(state.tool==='decal')requestView();$('brushHUD').textContent=(state.tool==='decal'?'DECAL · '+state.decalSize.toFixed(2):state.tool.toUpperCase()+' · '+state.size.toFixed(2))+' m';});}
+ for(const b of document.querySelectorAll('.segbtn'))b.addEventListener('click',()=>{state.style=b.dataset.style;drawToolPreview();document.querySelectorAll('.segbtn').forEach(x=>x.classList.toggle('active',x===b));});
+ function bindRange(id,prop,outid,render){let input=$(id),output=$(outid);input.addEventListener('input',()=>{state[prop]=+input.value*(prop==='opacity'||prop==='hardness'||prop==='camoStrength'?.01:1);output.textContent=prop==='size'||prop==='decalSize'?state[prop].toFixed(2)+' m':prop==='decalRotate'?state[prop]+'°':prop==='sprayDensity'?Math.round(state[prop])+' dots':prop==='spraySpread'||prop==='peakHeight'||prop==='peakSpacing'?state[prop].toFixed(2)+'×':Math.round(state[prop]*100)+'%';if(render)render();if(state.tool==='decal')requestView();drawToolPreview();$('brushHUD').textContent=(state.tool==='decal'?'DECAL · '+state.decalSize.toFixed(2):state.tool.toUpperCase()+' · '+state.size.toFixed(2))+' m';});}
+ bindRange('sprayDensity','sprayDensity','sprayDensityOut');
+ bindRange('spraySpread','spraySpread','spraySpreadOut');
+ bindRange('peakHeight','peakHeight','peakHeightOut');
+ bindRange('peakSpacing','peakSpacing','peakSpacingOut');
  bindRange('brushSize','size','sizeOut');bindRange('opacity','opacity','opacityOut');bindRange('hardness','hardness','hardnessOut');bindRange('decalSize','decalSize','decalSizeOut');bindRange('decalRotate','decalRotate','decalRotateOut');
  $('camoStrength').addEventListener('input',()=>{$('camoOut').textContent=$('camoStrength').value+'%';});$('camoStrength').addEventListener('change',()=>{pushUndo();state.camoStrength=+$('camoStrength').value/100;renderCamo();paintDirty();});
- $('colorPick').addEventListener('input',e=>{state.color=e.target.value;updateColors();});
+ $('colorPick').addEventListener('input',e=>{state.color=e.target.value;updateColors();drawToolPreview();});
  for(const b of document.querySelectorAll('.preset'))b.addEventListener('click',()=>selectCamo(b.dataset.camo));
  $('showCamo').addEventListener('change',e=>{state.showCamo=e.target.checked;paintDirty();});$('showPaint').addEventListener('change',e=>{state.showPaint=e.target.checked;paintDirty();});
  $('undoBtn').addEventListener('click',undo);$('redoBtn').addEventListener('click',redo);
